@@ -1,0 +1,20 @@
+{
+  "TEST1": {
+    "entryPrice": 100,
+    "qty": 1,
+    "target": 110,
+    "sl": 95,
+    "side": "BUY",
+    "_closing": false,
+    "useTrailingSL": false
+  },
+  "TEST2": {
+    "entryPrice": 100,
+    "qty": 1,
+    "target": 110,
+    "sl": 95,
+    "side": "BUY",
+    "_closing": false,
+    "useTrailingSL": true
+  }
+}
