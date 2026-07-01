@@ -20,9 +20,7 @@ const {
 } = require("./signal");
 
 const { getTickAsync } = require("./wsService");
-const { resolveFillPrice, resolveBrokerEntryPrice, waitForBrokerOrderCompletion, deriveEntryPriceFromBrokerPosition, findBrokerPositionForSymbol } = require("./fillPriceResolver");
-const { getPositions } = require("./positionService");
-const { normalizeTradeEntryPrice } = require("./tradePriceUtils");
+const { extractTradeBookEntries, findTradeBookEntryForTrade, toFrontendTrade } = require("./tradeBookUtils");
 
 function buildOrderPayload({
   instrument,
@@ -481,78 +479,15 @@ async function placeOrder(order, signalId = null) {
         : "SUCCESS";
 
     let childOrders = [];
-    let fillPrice = 0;
 
     if (brokerOrderDoc?._id) {
-      const brokerOrderId = orderData?.nOrdNo || orderData?.orderId || null;
-      let brokerOrderDetails = null;
-
-      if (brokerOrderId && statusValue === "SUCCESS") {
-        console.log(`⏳ Waiting for broker order completion for ${brokerOrderId}...`);
-        brokerOrderDetails = await waitForBrokerOrderCompletion({
-          orderId: brokerOrderId,
-          sessionToken,
-          sid,
-          baseUrl
-        });
-
-        fillPrice = await resolveBrokerEntryPrice({
-          orderId: brokerOrderId,
-          sessionToken,
-          sid,
-          baseUrl
-        });
-      }
-
-      if (!fillPrice) {
-        try {
-          const brokerPositions = await getPositions();
-          const matchingPosition = findBrokerPositionForSymbol(brokerPositions, symbol);
-          const derivedFromPosition = matchingPosition
-            ? deriveEntryPriceFromBrokerPosition(matchingPosition)
-            : 0;
-
-          if (derivedFromPosition > 0) {
-            fillPrice = derivedFromPosition;
-          }
-        } catch (positionErr) {
-          console.error("⚠️ Failed to derive entry price from broker positions:", positionErr.message || positionErr);
-        }
-      }
-
-      if (!fillPrice) {
-        fillPrice = await resolveFillPrice({
-          orderData,
-          order,
-          symbol,
-          instrument,
-          ltpLookup: getLTP,
-          tickLookup: getTickAsync
-        });
-      }
-
-      if (!fillPrice && orderData && statusValue === "SUCCESS") {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        fillPrice = await resolveFillPrice({
-          orderData,
-          order,
-          symbol,
-          instrument,
-          ltpLookup: getLTP,
-          tickLookup: getTickAsync
-        });
-      }
-
-      if (brokerOrderId && fillPrice > 0) {
-        try {
-          await BrokerOrder.findByIdAndUpdate(brokerOrderDoc._id, {
-            entryPrice: fillPrice,
-            brokerStatus: brokerOrderDetails?.status || brokerOrderDetails?.stat || brokerOrderDetails?.orderStatus || brokerOrderDetails?.order_status || brokerStatus
-          });
-        } catch (updateErr) {
-          console.error("❌ Failed to save broker entry price:", updateErr.message || updateErr);
-        }
-      }
+      const fillPrice = Number(
+        orderData?.fillPrice ||
+        orderData?.avgPrice ||
+        orderData?.price ||
+        orderData?.lastPrice ||
+        0
+      );
 
       if (orderData && statusValue === "SUCCESS") {
         childOrders = await placeGttOcoChildOrders({
@@ -562,7 +497,7 @@ async function placeOrder(order, signalId = null) {
           qtyFinal,
           productCode: productMap[String(rawProduct).trim().toUpperCase()] || "CNC",
           validity: validityMap[String(rawValidity).trim().toUpperCase()] || "DAY",
-          fillPrice,
+          fillPrice: fillPrice > 0 ? fillPrice : 0,
           targetPoints: targetPointsFinal,
           stopLossPoints: stopLossPointsFinal,
           amFlag: amFlag === "YES",
@@ -648,8 +583,8 @@ async function placeOrder(order, signalId = null) {
         quantity,
         instrument: symbol,
         orderId: orderData?.nOrdNo || "NA",
-        price: tradePrice || fillPrice || 0,
-        entryPrice: fillPrice || tradePrice || 0,
+        price: tradePrice,
+        entryPrice: tradePrice,
         targetPrice,
         targetPoints: targetPointsFinal,
         stopLossPoints: stopLossPointsFinal,
@@ -763,30 +698,35 @@ async function getTradeLog() {
     const trades = await Trade.find({ broker: "KOTAK" })
       .sort({ time: -1 });
 
-    const normalizedTrades = trades.map((trade) => normalizeTradeEntryPrice(trade.toObject ? trade.toObject() : trade));
+    const sessionToken = getSessionToken();
+    const sid = getSid();
+    const baseUrl = getBaseUrl();
 
-    try {
-      const brokerPositions = await getPositions();
-      for (const trade of normalizedTrades) {
-        const entryPrice = Number(trade.entryPrice || trade.price || 0);
-        if (!entryPrice || entryPrice <= 0) {
-          const matchingPosition = findBrokerPositionForSymbol(brokerPositions, trade.instrument);
-          const derivedPrice = matchingPosition
-            ? deriveEntryPriceFromBrokerPosition(matchingPosition)
-            : 0;
+    let tradeBookEntries = [];
 
-          if (derivedPrice > 0) {
-            trade.entryPrice = derivedPrice;
-            trade.price = derivedPrice;
-            await Trade.updateOne({ _id: trade._id }, { $set: { entryPrice: derivedPrice, price: derivedPrice } });
-          }
-        }
+    if (sessionToken && sid && baseUrl) {
+      try {
+        const tradeBookUrl = `${baseUrl}/quick/user/trades`;
+        const tradeBookRes = await axios.get(tradeBookUrl, {
+          headers: {
+            Auth: sessionToken,
+            Sid: sid,
+            "neo-fin-key": "neotradeapi"
+          },
+          timeout: 10000
+        });
+
+        tradeBookEntries = extractTradeBookEntries(tradeBookRes?.data || {});
+      } catch (tradeBookErr) {
+        console.error("⚠️ Failed to fetch trade book:", tradeBookErr?.response?.data || tradeBookErr.message || tradeBookErr);
       }
-    } catch (positionErr) {
-      console.error("⚠️ Failed to enrich trade entry prices:", positionErr.message || positionErr);
     }
 
-    return normalizedTrades;
+    return trades.map((trade) => {
+      const tradeObject = trade.toObject ? trade.toObject() : trade;
+      const matchingTradeBookEntry = findTradeBookEntryForTrade(tradeObject, tradeBookEntries);
+      return toFrontendTrade(tradeObject, matchingTradeBookEntry);
+    });
 
   } catch (err) {
     console.error("❌ getTradeLog Error:", err.message);

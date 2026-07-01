@@ -2,7 +2,6 @@ const axios = require("axios");
 const logger = require("./logger");
 const BrokerPosition = require("./models/BrokerPosition");
 const { getLTP } = require("./signal");
-const { deriveEntryPriceFromBrokerPosition } = require("./fillPriceResolver");
 
 const { getSession } = require("./sessionManager");
 const { isTokenExpired } = require("./tokenManager");
@@ -62,8 +61,6 @@ async function fetchPositions(force = false) {
       headers,
       timeout: 10000
     });
-
-    console.log("[positions-debug] Raw positions response:", JSON.stringify(response.data, null, 2));
 
     const positions =
       response.data?.data ||
@@ -250,9 +247,26 @@ async function getPositions() {
         // Fallback: derive a sensible last_price from broker fields when LTP not available
         if (!last_price || last_price === 0) {
           try {
-            const derivedPrice = deriveEntryPriceFromBrokerPosition({ raw: pos });
-            if (derivedPrice > 0) {
-              last_price = derivedPrice;
+            const buyAmt = Number(pos.buyAmt || pos.cfBuyAmt || 0);
+            const sellAmt = Number(pos.sellAmt || pos.cfSellAmt || 0);
+            const flBuy = Number(pos.flBuyQty || pos.flBuy || 0);
+            const flSell = Number(pos.flSellQty || pos.flSell || 0);
+            const cfBuy = Number(pos.cfBuyQty || pos.cfBuyQty || 0) || Number(pos.cfBuyQty || 0);
+            const cfSell = Number(pos.cfSellQty || pos.cfSellQty || 0) || Number(pos.cfSellQty || 0);
+
+            if (flBuy > 0 && buyAmt > 0) {
+              last_price = buyAmt / flBuy;
+            } else if (flSell > 0 && sellAmt > 0) {
+              last_price = sellAmt / flSell;
+            } else if (cfBuy > 0 && buyAmt > 0) {
+              last_price = buyAmt / cfBuy;
+            } else if (cfSell > 0 && sellAmt > 0) {
+              last_price = sellAmt / cfSell;
+            }
+
+            if ((!last_price || last_price === 0) && (buyAmt > 0 || sellAmt > 0)) {
+              // as a last resort, use the smaller of buy/sell amounts
+              last_price = (buyAmt > 0 && sellAmt > 0) ? Math.min(buyAmt, sellAmt) : Math.max(buyAmt, sellAmt);
             }
 
             if (process.env.DEBUG === "true") {
