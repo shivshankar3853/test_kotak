@@ -492,6 +492,14 @@ async function placeGttOcoChildOrders({
     return [];
   }
 
+  console.log("📐 Child order price computation", JSON.stringify({
+    fillPrice,
+    targetPoints,
+    stopLossPoints,
+    targetPrice: calculateChildPrices({ action, fillPrice, targetPoints, stopLossPoints }).targetPrice,
+    stopLossPrice: calculateChildPrices({ action, fillPrice, targetPoints, stopLossPoints }).stopLossPrice
+  }));
+
   const childResults = [];
 
   for (const child of childOrders) {
