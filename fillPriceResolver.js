@@ -1,10 +1,14 @@
+const qs = require("qs");
+
 async function resolveFillPrice({
   orderData = {},
   order = {},
   symbol,
   instrument,
   ltpLookup,
-  tickLookup
+  tickLookup,
+  maxAttempts = 3,
+  delayMs = 400
 } = {}) {
   const candidates = [
     orderData?.fillPrice,
@@ -21,42 +25,103 @@ async function resolveFillPrice({
     order?.PRICE
   ];
 
-  for (const candidate of candidates) {
-    const numericValue = Number(candidate);
-    if (Number.isFinite(numericValue) && numericValue > 0) {
-      return numericValue;
-    }
-  }
-
-  if (!symbol) {
-    return 0;
-  }
-
-  if (typeof ltpLookup === "function") {
-    try {
-      const ltpValue = Number(await ltpLookup(symbol, instrument?.es));
-      if (Number.isFinite(ltpValue) && ltpValue > 0) {
-        return ltpValue;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    for (const candidate of candidates) {
+      const numericValue = Number(candidate);
+      if (Number.isFinite(numericValue) && numericValue > 0) {
+        return numericValue;
       }
-    } catch (_) {
-      // ignore and continue to tick fallback
     }
-  }
 
-  if (typeof tickLookup === "function") {
-    try {
-      const tickValue = Number(await tickLookup(symbol));
-      if (Number.isFinite(tickValue) && tickValue > 0) {
-        return tickValue;
+    if (!symbol) {
+      return 0;
+    }
+
+    if (typeof ltpLookup === "function") {
+      try {
+        const ltpValue = Number(await ltpLookup(symbol, instrument?.es));
+        if (Number.isFinite(ltpValue) && ltpValue > 0) {
+          return ltpValue;
+        }
+      } catch (_) {
+        // ignore and continue to tick fallback
       }
-    } catch (_) {
-      // ignore
+    }
+
+    if (typeof tickLookup === "function") {
+      try {
+        const tickValue = Number(await tickLookup(symbol));
+        if (Number.isFinite(tickValue) && tickValue > 0) {
+          return tickValue;
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    if (attempt < maxAttempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
   return 0;
 }
 
+async function resolveBrokerEntryPrice({
+  orderId,
+  sessionToken,
+  sid,
+  baseUrl,
+  axiosInstance = require("axios")
+} = {}) {
+  if (!orderId || !sessionToken || !sid || !baseUrl) {
+    return 0;
+  }
+
+  const orderUrl = `${baseUrl}/quick/order/rule/ms/getOrderInfo`;
+  const payload = qs.stringify({
+    jData: JSON.stringify({ nOrdNo: String(orderId) }),
+    jKey: sessionToken
+  });
+
+  const headers = {
+    Accept: "application/json",
+    Auth: sessionToken,
+    Sid: sid,
+    "neo-fin-key": "neotradeapi",
+    "Content-Type": "application/x-www-form-urlencoded"
+  };
+
+  try {
+    const response = await axiosInstance.post(orderUrl, payload, { headers, timeout: 10000 });
+    const responseBody = response?.data && typeof response.data === "object" ? response.data : {};
+    const orderDetails = responseBody?.data || responseBody?.order || responseBody || {};
+
+    const candidates = [
+      orderDetails?.avgPrice,
+      orderDetails?.fillPrice,
+      orderDetails?.price,
+      orderDetails?.lastPrice,
+      orderDetails?.avg_price,
+      orderDetails?.fill_price,
+      orderDetails?.entryPrice,
+      orderDetails?.entry_price
+    ];
+
+    for (const candidate of candidates) {
+      const numericValue = Number(candidate);
+      if (Number.isFinite(numericValue) && numericValue > 0) {
+        return numericValue;
+      }
+    }
+  } catch (_) {
+    // ignore and fall back to other sources
+  }
+
+  return 0;
+}
+
 module.exports = {
-  resolveFillPrice
+  resolveFillPrice,
+  resolveBrokerEntryPrice
 };

@@ -15,6 +15,7 @@ const brokerOrderSchema = new mongoose.Schema(
     requestPayload: { type: mongoose.Schema.Types.Mixed },
     childOrders: [{ type: mongoose.Schema.Types.Mixed }],
     brokerOrderId: String,
+    entryPrice: Number,
     status: { type: String, default: "PENDING" },
     brokerStatus: String,
     response: { type: mongoose.Schema.Types.Mixed },

@@ -20,7 +20,7 @@ const {
 } = require("./signal");
 
 const { getTickAsync } = require("./wsService");
-const { resolveFillPrice } = require("./fillPriceResolver");
+const { resolveFillPrice, resolveBrokerEntryPrice } = require("./fillPriceResolver");
 
 function buildOrderPayload({
   instrument,
@@ -479,16 +479,50 @@ async function placeOrder(order, signalId = null) {
         : "SUCCESS";
 
     let childOrders = [];
+    let fillPrice = 0;
 
     if (brokerOrderDoc?._id) {
-      const fillPrice = await resolveFillPrice({
-        orderData,
-        order,
-        symbol,
-        instrument,
-        ltpLookup: getLTP,
-        tickLookup: getTickAsync
-      });
+      const brokerOrderId = orderData?.nOrdNo || orderData?.orderId || null;
+
+      if (brokerOrderId && statusValue === "SUCCESS") {
+        fillPrice = await resolveBrokerEntryPrice({
+          orderId: brokerOrderId,
+          sessionToken,
+          sid,
+          baseUrl
+        });
+      }
+
+      if (!fillPrice) {
+        fillPrice = await resolveFillPrice({
+          orderData,
+          order,
+          symbol,
+          instrument,
+          ltpLookup: getLTP,
+          tickLookup: getTickAsync
+        });
+      }
+
+      if (!fillPrice && orderData && statusValue === "SUCCESS") {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        fillPrice = await resolveFillPrice({
+          orderData,
+          order,
+          symbol,
+          instrument,
+          ltpLookup: getLTP,
+          tickLookup: getTickAsync
+        });
+      }
+
+      if (brokerOrderId && fillPrice > 0) {
+        try {
+          await BrokerOrder.findByIdAndUpdate(brokerOrderDoc._id, { entryPrice: fillPrice });
+        } catch (updateErr) {
+          console.error("❌ Failed to save broker entry price:", updateErr.message || updateErr);
+        }
+      }
 
       if (orderData && statusValue === "SUCCESS") {
         childOrders = await placeGttOcoChildOrders({
@@ -584,8 +618,8 @@ async function placeOrder(order, signalId = null) {
         quantity,
         instrument: symbol,
         orderId: orderData?.nOrdNo || "NA",
-        price: tradePrice,
-        entryPrice: tradePrice,
+        price: tradePrice || fillPrice || 0,
+        entryPrice: fillPrice || tradePrice || 0,
         targetPrice,
         targetPoints: targetPointsFinal,
         stopLossPoints: stopLossPointsFinal,
