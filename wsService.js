@@ -5,7 +5,7 @@ const LTPModel = require("./models/LTP");
 const {
   getSessionToken,
   getSid,
-  getWSUrl
+  getBaseUrl
 } = require("./tokenManager");
 
 const { findInstrument } = require("./instrumentStore");
@@ -337,6 +337,24 @@ async function connectWS() {
               }
 
               await BrokerOrder.findByIdAndUpdate(brokerOrder._id, updates);
+
+              if (orderStreamData.orderStatus === "COMPLETE" && orderStreamData.entryPrice > 0) {
+                try {
+                  const { placeGttOcoChildOrdersOnConfirmation } = require("./orderService");
+                  const sessionToken = getSessionToken();
+                  const sid = getSid();
+                  const baseUrl = getBaseUrl();
+                  await placeGttOcoChildOrdersOnConfirmation({
+                    brokerOrder,
+                    orderStreamData,
+                    sessionToken,
+                    sid,
+                    baseUrl
+                  });
+                } catch (childErr) {
+                  logger.error(`❌ Deferred child GTT/OCO placement error: ${childErr.message || childErr}`);
+                }
+              }
             }
 
             if (orderStreamData.entryPrice > 0) {

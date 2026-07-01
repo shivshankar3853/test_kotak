@@ -70,6 +70,83 @@ function calculateChildPrices({ action, fillPrice, targetPoints, stopLossPoints 
   return { targetPrice, stopLossPrice };
 }
 
+function shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData }) {
+  if (!brokerOrder || brokerOrder.childOrdersPlaced) {
+    return false;
+  }
+
+  const orderStatus = String(orderStreamData?.orderStatus || "").trim().toUpperCase();
+  const entryPrice = Number(orderStreamData?.entryPrice || 0);
+
+  return orderStatus === "COMPLETE" && entryPrice > 0;
+}
+
+async function placeGttOcoChildOrdersOnConfirmation({
+  brokerOrder,
+  orderStreamData,
+  sessionToken,
+  sid,
+  baseUrl
+}) {
+  if (!shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData })) {
+    return null;
+  }
+
+  const orderPayload = brokerOrder?.requestPayload?.order || {};
+  const action = String(brokerOrder?.side || orderPayload?.transaction_type || "")
+    .trim()
+    .toUpperCase();
+
+  const rawSymbol = brokerOrder?.symbol || orderPayload?.TS || orderStreamData?.symbol || "";
+  const instrument = findInstrument(rawSymbol);
+  const lotSize = Number(instrument?.ls || 0);
+  const quantity = Number(brokerOrder?.quantity || orderPayload?.quantity || 0);
+  const qtyFinal = lotSize > 0 ? String(quantity * lotSize) : String(quantity || 0);
+
+  const rawTP = orderPayload?.TP || orderPayload?.tp || orderPayload?.TGT || orderPayload?.target_point || orderPayload?.targetPoints || orderPayload?.target_points || orderPayload?.targetPrice;
+  const rawSLP = orderPayload?.SLP || orderPayload?.slp || orderPayload?.stop_loss || orderPayload?.stopLoss || orderPayload?.sl || orderPayload?.stop_loss_points || orderPayload?.stopLossPoint;
+  const targetPoints = Number(rawTP);
+  const stopLossPoints = Number(rawSLP);
+  const targetPointsFinal = Number.isFinite(targetPoints) && targetPoints > 0 ? targetPoints : 10;
+  const stopLossPointsFinal = Number.isFinite(stopLossPoints) && stopLossPoints > 0 ? stopLossPoints : 100;
+
+  const productCode = brokerOrder?.requestPayload?.jData?.pc || "CNC";
+  const validity = brokerOrder?.validity || orderPayload?.validity || orderPayload?.VL || "DAY";
+  const fillPrice = Number(orderStreamData?.entryPrice || 0);
+
+  const childOrders = await placeGttOcoChildOrders({
+    order: orderPayload,
+    instrument,
+    action,
+    qtyFinal,
+    productCode,
+    validity,
+    fillPrice,
+    targetPoints: targetPointsFinal,
+    stopLossPoints: stopLossPointsFinal,
+    amFlag: false,
+    sessionToken,
+    sid,
+    baseUrl,
+    brokerOrderId: brokerOrder._id
+  });
+
+  try {
+    await BrokerOrder.findByIdAndUpdate(brokerOrder._id, {
+      childOrdersPlaced: true,
+      childOrdersPlacedAt: new Date(),
+      entryPrice: fillPrice > 0 ? fillPrice : undefined,
+      brokerOrderId: brokerOrder.brokerOrderId || orderStreamData?.orderId || null,
+      brokerStatus: orderStreamData?.orderStatus || brokerOrder.brokerStatus,
+      status: orderStreamData?.orderStatus === "COMPLETE" ? "COMPLETED" : brokerOrder.status
+    });
+  } catch (err) {
+    console.error("❌ Failed to mark child GTT/OCO orders as placed:", err.message || err);
+  }
+
+  return childOrders;
+}
+
 async function postKotakOrder(jData, authToken, sidVal, baseUrlArg) {
   const targetBase = baseUrlArg || getBaseUrl();
   const orderUrl = `${targetBase}/quick/order/rule/ms/place`;
@@ -481,40 +558,13 @@ async function placeOrder(order, signalId = null) {
     let childOrders = [];
 
     if (brokerOrderDoc?._id) {
-      const fillPrice = Number(
-        orderData?.fillPrice ||
-        orderData?.avgPrice ||
-        orderData?.price ||
-        orderData?.lastPrice ||
-        0
-      );
-
-      if (orderData && statusValue === "SUCCESS") {
-        childOrders = await placeGttOcoChildOrders({
-          order,
-          instrument,
-          action,
-          qtyFinal,
-          productCode: productMap[String(rawProduct).trim().toUpperCase()] || "CNC",
-          validity: validityMap[String(rawValidity).trim().toUpperCase()] || "DAY",
-          fillPrice: fillPrice > 0 ? fillPrice : 0,
-          targetPoints: targetPointsFinal,
-          stopLossPoints: stopLossPointsFinal,
-          amFlag: amFlag === "YES",
-          sessionToken,
-          sid,
-          baseUrl,
-          brokerOrderId: brokerOrderDoc._id
-        });
-      }
-
       await BrokerOrder.findByIdAndUpdate(brokerOrderDoc._id, {
         brokerOrderId: orderData?.nOrdNo || orderData?.orderId || null,
         brokerStatus,
         response: orderData,
-        status: statusValue,
+        status: statusValue === "SUCCESS" ? "PENDING_CONFIRMATION" : statusValue,
         childOrders,
-        completedAt: new Date()
+        completedAt: statusValue === "SUCCESS" ? null : new Date()
       });
     }
 
@@ -792,5 +842,8 @@ async function exitAndReenter(currentPosition, newOrder, signalId = null) {
 module.exports = {
   placeOrder,
   getTradeLog,
-  exitAndReenter
+  exitAndReenter,
+  shouldPlaceChildOrdersForConfirmation,
+  placeGttOcoChildOrdersOnConfirmation,
+  placeGttOcoChildOrders
 };
