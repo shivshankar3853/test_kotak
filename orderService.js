@@ -78,9 +78,9 @@ function shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData, r
   const entryPrice = Number(resolvedEntryPrice || orderStreamData?.entryPrice || brokerOrder?.entryPrice || 0);
   const hasBrokerOrderId = Boolean(brokerOrder?.brokerOrderId || orderStreamData?.orderId);
   const orderStatus = String(orderStreamData?.orderStatus || "").trim().toUpperCase();
-  const hasCompletionSignal = orderStatus === "COMPLETE" || (!orderStatus && entryPrice > 0);
+  const isTerminalRejected = ["REJECTED", "FAILED", "CANCELLED"].includes(orderStatus);
 
-  return hasBrokerOrderId && entryPrice > 0 && hasCompletionSignal;
+  return hasBrokerOrderId && entryPrice > 0 && !isTerminalRejected;
 }
 
 async function resolveBrokerConfirmationPrice({ brokerOrder, orderStreamData, sessionToken, sid, baseUrl }) {
@@ -606,9 +606,17 @@ async function placeOrder(order, signalId = null) {
 
     if (brokerOrderDoc?._id) {
       const brokerOrderId = orderData?.nOrdNo || orderData?.orderId || null;
+      const initialFillPrice = Number(
+        orderData?.fillPrice ||
+        orderData?.avgPrice ||
+        orderData?.price ||
+        orderData?.lastPrice ||
+        0
+      );
 
       await BrokerOrder.findByIdAndUpdate(brokerOrderDoc._id, {
         brokerOrderId,
+        entryPrice: initialFillPrice > 0 ? initialFillPrice : undefined,
         brokerStatus,
         response: orderData,
         status: statusValue === "SUCCESS" ? "PENDING_CONFIRMATION" : statusValue,
@@ -622,7 +630,11 @@ async function placeOrder(order, signalId = null) {
             try {
               await placeGttOcoChildOrdersOnConfirmation({
                 brokerOrder: await BrokerOrder.findById(brokerOrderDoc._id),
-                orderStreamData: { orderId: brokerOrderId, orderStatus: "PENDING" },
+                orderStreamData: {
+                  orderId: brokerOrderId,
+                  orderStatus: initialFillPrice > 0 ? "COMPLETE" : "PENDING",
+                  entryPrice: initialFillPrice
+                },
                 sessionToken,
                 sid,
                 baseUrl
