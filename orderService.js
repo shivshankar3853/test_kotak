@@ -90,6 +90,33 @@ async function resolveBrokerConfirmationPrice({ brokerOrder, orderStreamData, se
   }
 
   const brokerOrderId = brokerOrder?.brokerOrderId || orderStreamData?.orderId || null;
+  const rawSymbol = brokerOrder?.symbol || orderStreamData?.symbol || "";
+  const instrument = findInstrument(rawSymbol);
+
+  if (rawSymbol) {
+    try {
+      const ltpVal = await getLTP(rawSymbol, instrument?.es);
+      const fallbackPrice = Number(ltpVal) || 0;
+      if (fallbackPrice > 0) {
+        return fallbackPrice;
+      }
+    } catch (ltpErr) {
+      console.log("⚠️ Could not fetch fallback LTP for child-order placement:", ltpErr?.message || ltpErr);
+    }
+
+    if (getTickAsync) {
+      try {
+        const tickVal = await getTickAsync(rawSymbol);
+        const fallbackTick = Number(tickVal) || 0;
+        if (fallbackTick > 0) {
+          return fallbackTick;
+        }
+      } catch (tickErr) {
+        console.log("⚠️ Could not fetch fallback tick for child-order placement:", tickErr?.message || tickErr);
+      }
+    }
+  }
+
   if (!brokerOrderId || !sessionToken || !sid || !baseUrl) {
     return 0;
   }
@@ -158,6 +185,7 @@ async function placeGttOcoChildOrdersOnConfirmation({
   }
 
   if (!shouldPlaceChildOrdersForConfirmation({ brokerOrder: persistedBrokerOrder, orderStreamData, resolvedEntryPrice: confirmedEntryPrice })) {
+    console.log("⚠️ Skipping child GTT/OCO placement because no usable entry price or broker order id was available yet");
     return null;
   }
 
@@ -182,6 +210,8 @@ async function placeGttOcoChildOrdersOnConfirmation({
   const productCode = brokerOrder?.requestPayload?.jData?.pc || "CNC";
   const validity = brokerOrder?.validity || orderPayload?.validity || orderPayload?.VL || "DAY";
   const fillPrice = Number(confirmedEntryPrice || orderStreamData?.entryPrice || persistedBrokerOrder?.entryPrice || brokerOrder?.entryPrice || 0);
+
+  console.log(`🧩 Placing child GTT/OCO orders for ${rawSymbol} using entry price ${fillPrice}`);
 
   const childOrders = await placeGttOcoChildOrders({
     order: orderPayload,
@@ -647,26 +677,27 @@ async function placeOrder(order, signalId = null) {
       });
 
       if (statusValue === "SUCCESS" && brokerOrderId && sessionToken && sid && baseUrl) {
-        setTimeout(() => {
-          (async () => {
-            try {
-              const latestBrokerOrder = await BrokerOrder.findById(brokerOrderDoc._id);
-              await placeGttOcoChildOrdersOnConfirmation({
-                brokerOrder: latestBrokerOrder,
-                orderStreamData: {
-                  orderId: brokerOrderId,
-                  orderStatus: initialFillPrice > 0 ? "COMPLETE" : "PENDING",
-                  entryPrice: initialFillPrice
-                },
-                sessionToken,
-                sid,
-                baseUrl
-              });
-            } catch (retryErr) {
-              console.log("⚠️ Deferred child-order retry failed:", retryErr?.message || retryErr);
-            }
-          })();
-        }, 4000);
+        const triggerChildOrderPlacement = async () => {
+          try {
+            const latestBrokerOrder = await BrokerOrder.findById(brokerOrderDoc._id);
+            await placeGttOcoChildOrdersOnConfirmation({
+              brokerOrder: latestBrokerOrder,
+              orderStreamData: {
+                orderId: brokerOrderId,
+                orderStatus: initialFillPrice > 0 ? "COMPLETE" : "PENDING",
+                entryPrice: initialFillPrice
+              },
+              sessionToken,
+              sid,
+              baseUrl
+            });
+          } catch (retryErr) {
+            console.log("⚠️ Deferred child-order retry failed:", retryErr?.message || retryErr);
+          }
+        };
+
+        triggerChildOrderPlacement();
+        setTimeout(triggerChildOrderPlacement, 4000);
       }
     }
 
