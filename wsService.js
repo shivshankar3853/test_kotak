@@ -14,6 +14,9 @@ const {
 } = require("./redisClient");
 
 const { sessionBus } = require("./sessionManager");
+const { extractOrderStreamData, extractPositionStreamData } = require("./orderStreamSync");
+const BrokerOrder = require("./models/BrokerOrder");
+const Trade = require("./models/Trade");
 
 const redis = getRedisClient();
 
@@ -317,16 +320,62 @@ async function connectWS() {
           }
         }
 
+        const orderStreamData = parsed.type === "order" ? extractOrderStreamData(parsed) : null;
+        const positionStreamData = parsed.type === "position" ? extractPositionStreamData(parsed) : null;
+
+        if (orderStreamData?.orderId) {
+          try {
+            const brokerOrder = await BrokerOrder.findOne({ brokerOrderId: orderStreamData.orderId });
+            if (brokerOrder) {
+              const updates = {
+                brokerStatus: orderStreamData.orderStatus,
+                status: orderStreamData.orderStatus === "COMPLETE" ? "COMPLETED" : brokerOrder.status
+              };
+
+              if (orderStreamData.entryPrice > 0) {
+                updates.entryPrice = orderStreamData.entryPrice;
+              }
+
+              await BrokerOrder.findByIdAndUpdate(brokerOrder._id, updates);
+            }
+
+            if (orderStreamData.entryPrice > 0) {
+              await Trade.updateMany(
+                {
+                  $or: [
+                    { orderId: orderStreamData.orderId },
+                    { brokerOrderId: orderStreamData.orderId }
+                  ]
+                },
+                {
+                  $set: {
+                    entryPrice: orderStreamData.entryPrice,
+                    price: orderStreamData.entryPrice,
+                    status: orderStreamData.orderStatus === "COMPLETE" ? "OPEN" : undefined
+                  }
+                },
+                { upsert: false }
+              );
+            }
+          } catch (streamErr) {
+            logger.error(`❌ Order stream persistence error: ${streamErr.message}`);
+          }
+
+          global.io?.emit("order-event", {
+            ...parsed,
+            orderStreamData
+          });
+        }
+
+        if (positionStreamData?.symbol) {
+          global.io?.emit("position-event", {
+            ...parsed,
+            positionStreamData
+          });
+        }
+
         global.io?.emit("tick", parsed);
         global.io?.emit("realtime", parsed);
-
-        if (parsed.order || parsed.orderId || parsed.status) {
-          global.io?.emit("order-event", parsed);
-        }
-
-        if (parsed.position || parsed.positions || parsed.type === "position") {
-          global.io?.emit("position-event", parsed);
-        }
       } catch (err) {
         logger.error(`WS parse error: ${err.message}`);
       }
