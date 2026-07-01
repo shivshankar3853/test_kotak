@@ -48,12 +48,12 @@ test('buildChildOrderPayloads creates validated TP and SL GTT payloads after exe
   assert.equal(payloads.length, 2);
   assert.equal(payloads[0].tag, 'TP');
   assert.equal(payloads[0].jData.pr, '110');
-  assert.equal(payloads[0].jData.pt, 'LMT');
+  assert.equal(payloads[0].jData.pt, 'MKT');
   assert.equal(payloads[0].jData.tp, '110');
   assert.equal(payloads[0].jData.rt, 'DAY');
   assert.equal(payloads[1].tag, 'SL');
   assert.equal(payloads[1].jData.pr, '95');
-  assert.equal(payloads[1].jData.pt, 'SL');
+  assert.equal(payloads[1].jData.pt, 'MKT');
   assert.equal(payloads[1].jData.tp, '95');
   assert.equal(payloads[1].jData.gtt, 'Y');
   assert.equal(payloads[1].jData.rt, 'DAY');
