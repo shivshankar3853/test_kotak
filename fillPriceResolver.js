@@ -74,25 +74,50 @@ function normalizeBrokerOrderStatus(value) {
 }
 
 function isBrokerOrderComplete(orderDetails = {}) {
-  const status = normalizeBrokerOrderStatus(
-    orderDetails?.status ||
-    orderDetails?.stat ||
-    orderDetails?.orderStatus ||
-    orderDetails?.order_status ||
-    orderDetails?.ordStatus ||
-    orderDetails?.ord_status ||
-    orderDetails?.executionStatus
-  );
+  const candidates = [];
 
-  return [
-    "COMPLETE",
-    "COMPLETED",
-    "FILLED",
-    "FULLY_FILLED",
-    "EXECUTED",
-    "TRADED",
-    "SUCCESS"
-  ].some((token) => status.includes(token));
+  if (Array.isArray(orderDetails?.data)) {
+    candidates.push(...orderDetails.data);
+  }
+
+  if (Array.isArray(orderDetails?.orders)) {
+    candidates.push(...orderDetails.orders);
+  }
+
+  if (orderDetails?.order) {
+    candidates.push(orderDetails.order);
+  }
+
+  candidates.push(orderDetails);
+
+  for (const candidate of candidates) {
+    const status = normalizeBrokerOrderStatus(
+      candidate?.status ||
+      candidate?.stat ||
+      candidate?.orderStatus ||
+      candidate?.order_status ||
+      candidate?.ordStatus ||
+      candidate?.ord_status ||
+      candidate?.executionStatus ||
+      candidate?.order_state ||
+      candidate?.orderState
+    );
+
+    if ([
+      "COMPLETE",
+      "COMPLETED",
+      "FILLED",
+      "FULLY_FILLED",
+      "EXECUTED",
+      "TRADED",
+      "SUCCESS",
+      "OK"
+    ].some((token) => status.includes(token))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function fetchBrokerOrderDetails({
@@ -123,6 +148,7 @@ async function fetchBrokerOrderDetails({
   try {
     const response = await axiosInstance.post(orderUrl, payload, { headers, timeout: 10000 });
     const responseBody = response?.data && typeof response.data === "object" ? response.data : {};
+    console.log("[order-debug] Broker order details response:", JSON.stringify(responseBody, null, 2));
     return responseBody?.data || responseBody?.order || responseBody || null;
   } catch (_) {
     return null;

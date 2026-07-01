@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { resolveFillPrice, resolveBrokerEntryPrice } = require('../fillPriceResolver');
+const { resolveFillPrice, resolveBrokerEntryPrice, isBrokerOrderComplete } = require('../fillPriceResolver');
 
 test('resolveFillPrice uses LTP fallback when broker response has no fill price', async () => {
   const value = await resolveFillPrice({
@@ -68,4 +68,17 @@ test('resolveBrokerEntryPrice reads the price from the broker order-details resp
   });
 
   assert.equal(value, 58090);
+});
+
+test('isBrokerOrderComplete handles nested array order payloads', () => {
+  const value = isBrokerOrderComplete({
+    data: [
+      {
+        status: 'COMPLETE',
+        avgPrice: 99345.5
+      }
+    ]
+  });
+
+  assert.equal(value, true);
 });

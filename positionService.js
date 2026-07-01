@@ -62,6 +62,8 @@ async function fetchPositions(force = false) {
       timeout: 10000
     });
 
+    console.log("[positions-debug] Raw positions response:", JSON.stringify(response.data, null, 2));
+
     const positions =
       response.data?.data ||
       response.data?.Success ||
