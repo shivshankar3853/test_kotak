@@ -73,6 +73,69 @@ function normalizeBrokerOrderStatus(value) {
     .toUpperCase();
 }
 
+function normalizeBrokerSymbol(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function deriveEntryPriceFromBrokerPosition(position = {}) {
+  const raw = position?.raw || position || {};
+
+  const buyAmt = Number(raw.buyAmt || raw.cfBuyAmt || raw.buy_amount || raw.buyAmount || 0);
+  const sellAmt = Number(raw.sellAmt || raw.cfSellAmt || raw.sell_amount || raw.sellAmount || 0);
+  const flBuyQty = Number(raw.flBuyQty || raw.fl_buy_qty || raw.flBuy || raw.buyQty || 0);
+  const flSellQty = Number(raw.flSellQty || raw.fl_sell_qty || raw.flSell || raw.sellQty || 0);
+  const cfBuyQty = Number(raw.cfBuyQty || raw.cf_buy_qty || raw.cfBuy || 0);
+  const cfSellQty = Number(raw.cfSellQty || raw.cf_sell_qty || raw.cfSell || 0);
+
+  const qty = flBuyQty || cfBuyQty || 0;
+  const oppositeQty = flSellQty || cfSellQty || 0;
+
+  if (buyAmt > 0 && qty > 0) {
+    return buyAmt / qty;
+  }
+
+  if (sellAmt > 0 && oppositeQty > 0) {
+    return sellAmt / oppositeQty;
+  }
+
+  return 0;
+}
+
+function findBrokerPositionForSymbol(positions = [], symbol) {
+  const targetSymbol = normalizeBrokerSymbol(symbol);
+  if (!targetSymbol) {
+    return null;
+  }
+
+  for (const position of positions) {
+    const raw = position?.raw || position || {};
+    const candidateSymbols = [
+      raw?.trdSym,
+      raw?.trdSymbol,
+      raw?.tsym,
+      raw?.sym,
+      raw?.symbol,
+      raw?.TS,
+      raw?.ts,
+      raw?.instrument,
+      position?.trading_symbol,
+      position?.instrument,
+      position?.symbol,
+      position?.ts
+    ];
+
+    const matched = candidateSymbols.some((candidate) => normalizeBrokerSymbol(candidate) === targetSymbol);
+    if (matched) {
+      return position;
+    }
+  }
+
+  return null;
+}
+
 function isBrokerOrderComplete(orderDetails = {}) {
   const candidates = [];
 
@@ -329,6 +392,8 @@ module.exports = {
   fetchBrokerOrderDetails,
   fetchBrokerTradeBook,
   extractTradeBookEntryPrice,
+  deriveEntryPriceFromBrokerPosition,
+  findBrokerPositionForSymbol,
   waitForBrokerOrderCompletion,
   isBrokerOrderComplete
 };

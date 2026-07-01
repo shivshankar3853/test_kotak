@@ -20,7 +20,8 @@ const {
 } = require("./signal");
 
 const { getTickAsync } = require("./wsService");
-const { resolveFillPrice, resolveBrokerEntryPrice, waitForBrokerOrderCompletion } = require("./fillPriceResolver");
+const { resolveFillPrice, resolveBrokerEntryPrice, waitForBrokerOrderCompletion, deriveEntryPriceFromBrokerPosition, findBrokerPositionForSymbol } = require("./fillPriceResolver");
+const { getPositions } = require("./positionService");
 
 function buildOrderPayload({
   instrument,
@@ -503,6 +504,22 @@ async function placeOrder(order, signalId = null) {
       }
 
       if (!fillPrice) {
+        try {
+          const brokerPositions = await getPositions();
+          const matchingPosition = findBrokerPositionForSymbol(brokerPositions, symbol);
+          const derivedFromPosition = matchingPosition
+            ? deriveEntryPriceFromBrokerPosition(matchingPosition)
+            : 0;
+
+          if (derivedFromPosition > 0) {
+            fillPrice = derivedFromPosition;
+          }
+        } catch (positionErr) {
+          console.error("⚠️ Failed to derive entry price from broker positions:", positionErr.message || positionErr);
+        }
+      }
+
+      if (!fillPrice) {
         fillPrice = await resolveFillPrice({
           orderData,
           order,
@@ -742,8 +759,31 @@ async function getTradeLog() {
       return [];
     }
 
-    return await Trade.find({ broker: "KOTAK" })
+    const trades = await Trade.find({ broker: "KOTAK" })
       .sort({ time: -1 });
+
+    try {
+      const brokerPositions = await getPositions();
+      for (const trade of trades) {
+        const entryPrice = Number(trade.entryPrice || trade.price || 0);
+        if (!entryPrice || entryPrice <= 0) {
+          const matchingPosition = findBrokerPositionForSymbol(brokerPositions, trade.instrument);
+          const derivedPrice = matchingPosition
+            ? deriveEntryPriceFromBrokerPosition(matchingPosition)
+            : 0;
+
+          if (derivedPrice > 0) {
+            trade.entryPrice = derivedPrice;
+            trade.price = derivedPrice;
+            await Trade.updateOne({ _id: trade._id }, { $set: { entryPrice: derivedPrice, price: derivedPrice } });
+          }
+        }
+      }
+    } catch (positionErr) {
+      console.error("⚠️ Failed to enrich trade entry prices:", positionErr.message || positionErr);
+    }
+
+    return trades;
 
   } catch (err) {
     console.error("❌ getTradeLog Error:", err.message);
