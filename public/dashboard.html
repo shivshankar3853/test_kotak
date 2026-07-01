@@ -314,6 +314,7 @@ async function loadTrades(){
         <td>${t.quantity}</td>
         <td>${t.instrument}</td>
         <td>${entryPrice > 0 ? entryPrice : 0}</td>
+        <td>${t.orderId || ""}</td>
         <td class="${cls}">${t.pnl}</td>
       </tr>`;
   });

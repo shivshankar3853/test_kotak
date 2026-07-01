@@ -45,3 +45,13 @@ test('findTradeBookEntryForTrade picks the matching side and quantity when sever
 
   assert.equal(result.entryPrice, 35.88);
 });
+
+test('toFrontendTrade prefers the trade-book entry price and order id over stale local values', () => {
+  const trade = { instrument: 'ITBEES', quantity: 1, side: 'BUY', price: 100, entryPrice: 100, orderId: 'OLD' };
+  const tradeBookEntry = { instrument: 'ITBEES', side: 'BUY', quantity: 1, entryPrice: 35.88, orderId: '260216000308219' };
+
+  const result = toFrontendTrade(trade, tradeBookEntry);
+
+  assert.equal(result.entryPrice, 35.88);
+  assert.equal(result.orderId, '260216000308219');
+});

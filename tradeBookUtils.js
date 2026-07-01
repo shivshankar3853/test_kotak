@@ -126,14 +126,15 @@ function findTradeBookEntryForTrade(trade = {}, tradeBookEntries = []) {
 
 function toFrontendTrade(trade = {}, tradeBookEntry = null) {
   const normalizedTrade = trade && typeof trade === "object" ? trade : {};
-  const entryPrice = Number(
-    normalizedTrade.entryPrice ||
-    normalizedTrade.price ||
+  const brokerEntryPrice = Number(
     tradeBookEntry?.entryPrice ||
     tradeBookEntry?.raw?.avgPrc ||
     tradeBookEntry?.raw?.avgPrice ||
     0
   );
+  const entryPrice = brokerEntryPrice > 0
+    ? brokerEntryPrice
+    : Number(normalizedTrade.entryPrice || normalizedTrade.price || 0);
 
   return {
     ...normalizedTrade,
@@ -142,7 +143,8 @@ function toFrontendTrade(trade = {}, tradeBookEntry = null) {
     side: normalizedTrade.side || tradeBookEntry?.side || "",
     quantity: normalizedTrade.quantity || tradeBookEntry?.quantity || 0,
     instrument: normalizedTrade.instrument || tradeBookEntry?.instrument || "",
-    time: normalizedTrade.time || tradeBookEntry?.time || null
+    time: normalizedTrade.time || tradeBookEntry?.time || null,
+    orderId: tradeBookEntry?.orderId || normalizedTrade.orderId || null
   };
 }
 
