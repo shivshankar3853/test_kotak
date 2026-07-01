@@ -20,6 +20,7 @@ const {
 } = require("./signal");
 
 const { getTickAsync } = require("./wsService");
+const { resolveFillPrice } = require("./fillPriceResolver");
 
 function buildOrderPayload({
   instrument,
@@ -480,13 +481,14 @@ async function placeOrder(order, signalId = null) {
     let childOrders = [];
 
     if (brokerOrderDoc?._id) {
-      const fillPrice = Number(
-        orderData?.fillPrice ||
-        orderData?.avgPrice ||
-        orderData?.price ||
-        orderData?.lastPrice ||
-        0
-      );
+      const fillPrice = await resolveFillPrice({
+        orderData,
+        order,
+        symbol,
+        instrument,
+        ltpLookup: getLTP,
+        tickLookup: getTickAsync
+      });
 
       if (orderData && statusValue === "SUCCESS") {
         childOrders = await placeGttOcoChildOrders({
@@ -496,7 +498,7 @@ async function placeOrder(order, signalId = null) {
           qtyFinal,
           productCode: productMap[String(rawProduct).trim().toUpperCase()] || "CNC",
           validity: validityMap[String(rawValidity).trim().toUpperCase()] || "DAY",
-          fillPrice: fillPrice > 0 ? fillPrice : 0,
+          fillPrice,
           targetPoints: targetPointsFinal,
           stopLossPoints: stopLossPointsFinal,
           amFlag: amFlag === "YES",
