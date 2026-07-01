@@ -312,7 +312,7 @@ async function connectWS() {
                   raw: parsed,
                   timestamp: new Date()
                 },
-                { upsert: true, new: true, setDefaultsOnInsert: true }
+                { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
               );
             } catch (e) {
               logger.error(`❌ LTP persistence error: ${e.message}`);

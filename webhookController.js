@@ -232,6 +232,7 @@ function convertTV(signal) {
       0
     );
     const explicitTargetPrice = Number(signal.target_price || signal.targetPrice || 0);
+    const explicitStopLossPrice = Number(signal.stopLossPrice || signal.stop_loss_price || 0);
 
     return {
       TS: finalSymbol,
@@ -244,8 +245,8 @@ function convertTV(signal) {
       AMO: signal.AMO || signal.amo || signal.after_market || signal.afterMarket || signal.am || "",
       TP: rawTargetPoints,
       SLP: rawStopLossPoints,
-      targetPrice: explicitTargetPrice > 0 && rawTargetPoints <= 0 ? explicitTargetPrice : 0,
-      stopLossPoint: rawStopLossPoints,
+      targetPrice: explicitTargetPrice > 0 ? explicitTargetPrice : (rawTargetPoints > 0 ? rawTargetPoints : 0),
+      stopLossPoint: explicitStopLossPrice > 0 ? explicitStopLossPrice : rawStopLossPoints,
       disclosed_quantity: 0
     };
   } catch (err) {
