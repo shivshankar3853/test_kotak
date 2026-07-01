@@ -80,7 +80,11 @@ function shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData, r
   const orderStatus = String(orderStreamData?.orderStatus || "").trim().toUpperCase();
   const isTerminalRejected = ["REJECTED", "FAILED", "CANCELLED"].includes(orderStatus);
 
-  return hasBrokerOrderId && entryPrice > 0 && !isTerminalRejected;
+  if (isTerminalRejected) {
+    return false;
+  }
+
+  return hasBrokerOrderId && entryPrice > 0;
 }
 
 async function resolveBrokerConfirmationPrice({ brokerOrder, orderStreamData, sessionToken, sid, baseUrl }) {
