@@ -127,15 +127,37 @@ async function placeGttOcoChildOrdersOnConfirmation({
   sid,
   baseUrl
 }) {
-  const confirmedEntryPrice = await resolveBrokerConfirmationPrice({
-    brokerOrder,
-    orderStreamData,
-    sessionToken,
-    sid,
-    baseUrl
-  });
+  let persistedBrokerOrder = brokerOrder;
+  let confirmedEntryPrice = Number(orderStreamData?.entryPrice || brokerOrder?.entryPrice || 0);
 
-  if (!shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData, resolvedEntryPrice: confirmedEntryPrice })) {
+  if (!confirmedEntryPrice || confirmedEntryPrice <= 0) {
+    confirmedEntryPrice = await resolveBrokerConfirmationPrice({
+      brokerOrder,
+      orderStreamData,
+      sessionToken,
+      sid,
+      baseUrl
+    });
+  }
+
+  if (persistedBrokerOrder?._id && confirmedEntryPrice > 0) {
+    try {
+      persistedBrokerOrder = await BrokerOrder.findByIdAndUpdate(
+        persistedBrokerOrder._id,
+        {
+          entryPrice: confirmedEntryPrice,
+          brokerOrderId: persistedBrokerOrder.brokerOrderId || orderStreamData?.orderId || null,
+          brokerStatus: orderStreamData?.orderStatus || persistedBrokerOrder.brokerStatus,
+          status: orderStreamData?.orderStatus === "COMPLETE" ? "COMPLETED" : persistedBrokerOrder.status
+        },
+        { new: true }
+      );
+    } catch (persistErr) {
+      console.log("⚠️ Could not persist confirmed entry price:", persistErr?.message || persistErr);
+    }
+  }
+
+  if (!shouldPlaceChildOrdersForConfirmation({ brokerOrder: persistedBrokerOrder, orderStreamData, resolvedEntryPrice: confirmedEntryPrice })) {
     return null;
   }
 
@@ -159,7 +181,7 @@ async function placeGttOcoChildOrdersOnConfirmation({
 
   const productCode = brokerOrder?.requestPayload?.jData?.pc || "CNC";
   const validity = brokerOrder?.validity || orderPayload?.validity || orderPayload?.VL || "DAY";
-  const fillPrice = Number(confirmedEntryPrice || orderStreamData?.entryPrice || brokerOrder?.entryPrice || 0);
+  const fillPrice = Number(confirmedEntryPrice || orderStreamData?.entryPrice || persistedBrokerOrder?.entryPrice || brokerOrder?.entryPrice || 0);
 
   const childOrders = await placeGttOcoChildOrders({
     order: orderPayload,
@@ -183,7 +205,7 @@ async function placeGttOcoChildOrdersOnConfirmation({
       childOrdersPlaced: true,
       childOrdersPlacedAt: new Date(),
       entryPrice: fillPrice > 0 ? fillPrice : undefined,
-      brokerOrderId: brokerOrder.brokerOrderId || orderStreamData?.orderId || null,
+      brokerOrderId: persistedBrokerOrder?.brokerOrderId || brokerOrder.brokerOrderId || orderStreamData?.orderId || null,
       brokerStatus: orderStreamData?.orderStatus || brokerOrder.brokerStatus,
       status: orderStreamData?.orderStatus === "COMPLETE" ? "COMPLETED" : brokerOrder.status
     });
@@ -628,8 +650,9 @@ async function placeOrder(order, signalId = null) {
         setTimeout(() => {
           (async () => {
             try {
+              const latestBrokerOrder = await BrokerOrder.findById(brokerOrderDoc._id);
               await placeGttOcoChildOrdersOnConfirmation({
-                brokerOrder: await BrokerOrder.findById(brokerOrderDoc._id),
+                brokerOrder: latestBrokerOrder,
                 orderStreamData: {
                   orderId: brokerOrderId,
                   orderStatus: initialFillPrice > 0 ? "COMPLETE" : "PENDING",
