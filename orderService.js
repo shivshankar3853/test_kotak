@@ -47,7 +47,7 @@ function buildOrderPayload({
     pt: orderType,
     qt: qtyFinal,
     rt: validity || "DAY",
-    tp: orderType === "SL" && triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : "0",
+    tp: triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : "0",
     ts: instrument?.ts,
     tt: action === "BUY" ? "B" : "S"
   };
@@ -112,12 +112,13 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-        orderType: "LMT",
-        price: targetPrice,
+        orderType: "MKT",
+        price: 0,
         amFlag: false,
         gtt: true,
         oco: true,
-        orderTag: "TP"
+        orderTag: "TP",
+        triggerPrice: targetPrice
       })
     });
 
@@ -129,8 +130,8 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-        orderType: "SL",
-        price: stopLossPrice,
+        orderType: "MKT",
+        price: 0,
         amFlag: false,
         gtt: true,
         oco: true,
@@ -147,12 +148,13 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-        orderType: "LMT",
-        price: targetPrice,
+        orderType: "MKT",
+        price: 0,
         amFlag: false,
         gtt: true,
         oco: false,
-        orderTag: "TP"
+        orderTag: "TP",
+        triggerPrice: targetPrice
       })
     });
   } else if (hasSL) {
@@ -164,8 +166,8 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-        orderType: "SL",
-        price: stopLossPrice,
+        orderType: "MKT",
+        price: 0,
         amFlag: false,
         gtt: true,
         oco: false,
@@ -402,8 +404,8 @@ async function placeGttOcoChildOrdersOnConfirmation({
   const rawSLP = orderPayload?.SLP || orderPayload?.slp || orderPayload?.stop_loss || orderPayload?.stopLoss || orderPayload?.sl || orderPayload?.stop_loss_points || orderPayload?.stopLossPoint;
   const targetPoints = Number(rawTP);
   const stopLossPoints = Number(rawSLP);
-  const targetPointsFinal = Number.isFinite(targetPoints) && targetPoints > 0 ? targetPoints : 10;
-  const stopLossPointsFinal = Number.isFinite(stopLossPoints) && stopLossPoints > 0 ? stopLossPoints : 100;
+  const targetPointsFinal = Number.isFinite(targetPoints) && targetPoints > 0 ? targetPoints : 0;
+  const stopLossPointsFinal = Number.isFinite(stopLossPoints) && stopLossPoints > 0 ? stopLossPoints : 0;
 
   const productCode = persistedBrokerOrder?.requestPayload?.jData?.pc || brokerOrder?.requestPayload?.jData?.pc || "CNC";
   const validity = persistedBrokerOrder?.validity || brokerOrder?.validity || orderPayload?.validity || orderPayload?.VL || "DAY";
@@ -658,11 +660,11 @@ async function placeOrder(order, signalId = null) {
     const targetPointsFinal =
       Number.isFinite(targetPoints) && targetPoints > 0
         ? targetPoints
-        : 10;
+        : 0;
     const stopLossPointsFinal =
       Number.isFinite(stopLossPoints) && stopLossPoints > 0
         ? stopLossPoints
-        : 100;
+        : 0;
 
     const orderType = String(rawOrderType).trim().toUpperCase();
     const normalizedOrderType =
