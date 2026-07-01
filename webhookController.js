@@ -6,6 +6,105 @@ const { fetchPositions } = require("./positionService");
 const BrokerPosition = require("./models/BrokerPosition");
 const Signal = require("./models/Signal");
 
+// Sample webhook payloads for equity, future, option, and commodity inputs
+const SAMPLE_SIGNAL_PAYLOADS = {
+  equity: {
+    TS: "RELIANCE",
+    TT: "BUY",
+    Q: 1,
+    OT: "MARKET",
+    P: "CNC",
+    VL: "DAY"
+  },
+  future: {
+    TS: "NIFTY26JUN21500FUT",
+    TT: "SELL",
+    Q: 1,
+    OT: "LIMIT",
+    PRICE: 21450,
+    P: "NRML",
+    VL: "DAY"
+  },
+  option: {
+    TS: "BANKNIFTY26JUN42000CE",
+    TT: "BUY",
+    Q: 1,
+    OT: "LMT",
+    PRICE: 250,
+    P: "MIS",
+    VL: "DAY"
+  },
+  commodity: {
+    TS: "GOLD26JULFUT",
+    TT: "SELL",
+    Q: 1,
+    OT: "SL",
+    PRICE: 62000,
+    P: "NRML",
+    VL: "DAY"
+  }
+};
+
+const MONTH_NUM_TO_NAME = {
+  "01": "JAN",
+  "02": "FEB",
+  "03": "MAR",
+  "04": "APR",
+  "05": "MAY",
+  "06": "JUN",
+  "07": "JUL",
+  "08": "AUG",
+  "09": "SEP",
+  "10": "OCT",
+  "11": "NOV",
+  "12": "DEC"
+};
+
+function normalizeDerivativeSymbol(symbol) {
+  if (!symbol) return null;
+
+  const normalized = String(symbol)
+    .trim()
+    .toUpperCase()
+    .replace(/[-\/\.\_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const compact = normalized.replace(/\s+/g, "");
+
+  const alphaOption = compact.match(/^([A-Z]+?)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})(\d+)(CE|PE)$/);
+  if (alphaOption) {
+    const [, index, day, month, year, strike, optionType] = alphaOption;
+    return `${index}${day}${month}${year}${strike}${optionType}`;
+  }
+
+  const numericOption = compact.match(/^([A-Z]+?)(\d{2})(\d{2})(\d{2})(\d+)(CE|PE)$/);
+  if (numericOption) {
+    const [, index, day, monthNum, year, strike, optionType] = numericOption;
+    const monthName = MONTH_NUM_TO_NAME[monthNum];
+    if (monthName) {
+      return `${index}${day}${monthName}${year}${strike}${optionType}`;
+    }
+  }
+
+  const alphaFuture = compact.match(/^([A-Z]+?)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})FUT$/);
+  if (alphaFuture) {
+    const [, index, day, month, year] = alphaFuture;
+    return `${index}${day}${month}${year}FUT`;
+  }
+
+  const numericFuture = compact.match(/^([A-Z]+?)(\d{2})(\d{2})(\d{2})FUT$/);
+  if (numericFuture) {
+    const [, index, day, monthNum, year] = numericFuture;
+    const monthName = MONTH_NUM_TO_NAME[monthNum];
+    if (monthName) {
+      return `${index}${day}${monthName}${year}FUT`;
+    }
+  }
+
+  return null;
+}
+
 // ==============================
 // 🚫 DUPLICATE SIGNAL PROTECTION (SAFE + LEAK FREE)
 // Use control.js for the 45-second dedupe window.

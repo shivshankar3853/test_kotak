@@ -13,6 +13,7 @@ const brokerOrderSchema = new mongoose.Schema(
     targetPrice: Number,
     stopLossPoint: Number,
     requestPayload: { type: mongoose.Schema.Types.Mixed },
+    childOrders: [{ type: mongoose.Schema.Types.Mixed }],
     brokerOrderId: String,
     status: { type: String, default: "PENDING" },
     brokerStatus: String,

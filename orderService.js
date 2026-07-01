@@ -21,6 +21,209 @@ const {
 
 const { getTickAsync } = require("./wsService");
 
+function buildOrderPayload({
+  instrument,
+  action,
+  qtyFinal,
+  productCode,
+  validity,
+  orderType,
+  price,
+  amFlag,
+  gtt = false,
+  oco = false,
+  orderTag = null
+}) {
+  const payload = {
+    am: amFlag ? "YES" : "NO",
+    dq: "0",
+    es: instrument?.es || "nse_fo",
+    mp: "0",
+    pc: productCode,
+    pf: "N",
+    pr: String(price || "0"),
+    pt: orderType,
+    qt: qtyFinal,
+    rt: gtt ? "GTT" : validity || "DAY",
+    tp: "0",
+    ts: instrument?.ts,
+    tt: action === "BUY" ? "B" : "S"
+  };
+
+  if (gtt) {
+    payload.gtt = "Y";
+  }
+  if (oco) {
+    payload.oco = "Y";
+  }
+  if (orderTag) {
+    payload.tag = orderTag;
+  }
+
+  return payload;
+}
+
+function calculateChildPrices({ action, fillPrice, targetPoints, stopLossPoints }) {
+  const targetPrice = action === "BUY" ? fillPrice + targetPoints : fillPrice - targetPoints;
+  const stopLossPrice = action === "BUY" ? fillPrice - stopLossPoints : fillPrice + stopLossPoints;
+  return { targetPrice, stopLossPrice };
+}
+
+async function postKotakOrder(jData, authToken, sidVal, baseUrlArg) {
+  const targetBase = baseUrlArg || getBaseUrl();
+  const orderUrl = `${targetBase}/quick/order/rule/ms/place`;
+  const payload = qs.stringify({ jData: JSON.stringify(jData), jKey: authToken });
+  const headers = {
+    Accept: "application/json",
+    Auth: authToken,
+    Sid: sidVal,
+    "neo-fin-key": "neotradeapi",
+    "Content-Type": "application/x-www-form-urlencoded"
+  };
+  return axios.post(orderUrl, payload, { headers, timeout: 10000 });
+}
+
+async function placeGttOcoChildOrders({
+  order,
+  instrument,
+  action,
+  qtyFinal,
+  productCode,
+  validity,
+  fillPrice,
+  targetPoints,
+  stopLossPoints,
+  amFlag,
+  sessionToken,
+  sid,
+  baseUrl,
+  brokerOrderId
+}) {
+  const hasTP = Number.isFinite(targetPoints) && targetPoints > 0;
+  const hasSL = Number.isFinite(stopLossPoints) && stopLossPoints > 0;
+
+  if (!hasTP && !hasSL) {
+    return [];
+  }
+
+  if (!fillPrice || isNaN(fillPrice) || fillPrice <= 0) {
+    console.log("⚠️ Skipping GTT/OCO because fill price is unavailable");
+    return [];
+  }
+
+  const { targetPrice, stopLossPrice } = calculateChildPrices({
+    action,
+    fillPrice,
+    targetPoints,
+    stopLossPoints
+  });
+
+  const isBuy = action === "BUY";
+  const oppositeAction = isBuy ? "SELL" : "BUY";
+  const childOrders = [];
+
+  if (hasTP && hasSL) {
+    childOrders.push({
+      tag: "TP",
+      jData: buildOrderPayload({
+        instrument,
+        action: oppositeAction,
+        qtyFinal,
+        productCode,
+        validity,
+        orderType: "LMT",
+        price: targetPrice,
+        amFlag: false,
+        gtt: true,
+        oco: true,
+        orderTag: "TP"
+      })
+    });
+
+    childOrders.push({
+      tag: "SL",
+      jData: buildOrderPayload({
+        instrument,
+        action: oppositeAction,
+        qtyFinal,
+        productCode,
+        validity,
+        orderType: "SL",
+        price: stopLossPrice,
+        amFlag: false,
+        gtt: true,
+        oco: true,
+        orderTag: "SL"
+      })
+    });
+  } else if (hasTP) {
+    childOrders.push({
+      tag: "TP",
+      jData: buildOrderPayload({
+        instrument,
+        action: oppositeAction,
+        qtyFinal,
+        productCode,
+        validity,
+        orderType: "LMT",
+        price: targetPrice,
+        amFlag: false,
+        gtt: true,
+        oco: false,
+        orderTag: "TP"
+      })
+    });
+  } else if (hasSL) {
+    childOrders.push({
+      tag: "SL",
+      jData: buildOrderPayload({
+        instrument,
+        action: oppositeAction,
+        qtyFinal,
+        productCode,
+        validity,
+        orderType: "SL",
+        price: stopLossPrice,
+        amFlag: false,
+        gtt: true,
+        oco: false,
+        orderTag: "SL"
+      })
+    });
+  }
+
+  const childResults = [];
+
+  for (const child of childOrders) {
+    try {
+      const response = await postKotakOrder(child.jData, sessionToken, sid, baseUrl);
+      const responseBody = response?.data && typeof response.data === "object" ? response.data : {};
+      childResults.push({
+        tag: child.tag,
+        status: responseBody?.status || responseBody?.stat || responseBody?.order_status || responseBody?.orderStatus || "UNKNOWN",
+        response: responseBody,
+        payload: child.jData
+      });
+    } catch (err) {
+      childResults.push({
+        tag: child.tag,
+        error: err?.response?.data || err.message,
+        payload: child.jData
+      });
+    }
+  }
+
+  if (brokerOrderId) {
+    try {
+      await BrokerOrder.findByIdAndUpdate(brokerOrderId, { childOrders: childResults });
+    } catch (err) {
+      console.error("❌ Failed to save child GTT/OCO orders:", err.message || err);
+    }
+  }
+
+  return childResults;
+}
+
 async function placeOrder(order, signalId = null) {
 
   try {
@@ -112,9 +315,35 @@ async function placeOrder(order, signalId = null) {
       order?.sl ||
       order?.stop_loss_points ||
       order?.stopLossPoint;
+    const rawPrice =
+      order?.PRICE ||
+      order?.price ||
+      order?.limit_price ||
+      order?.trigger_price ||
+      order?.triggerPrice ||
+      0;
+    const rawValidity =
+      order?.validity ||
+      order?.VL ||
+      order?.time_in_force ||
+      order?.timeInForce ||
+      "DAY";
+    const rawProduct =
+      order?.product ||
+      order?.P ||
+      order?.product_type ||
+      order?.productType ||
+      "NRML";
+    const rawOrderType =
+      order?.order_type ||
+      order?.OT ||
+      order?.orderType ||
+      order?.type ||
+      "MARKET";
 
     const targetPoints = Number(rawTP);
     const stopLossPoints = Number(rawSLP);
+    const priceValue = Number(rawPrice);
     const targetPointsFinal =
       Number.isFinite(targetPoints) && targetPoints > 0
         ? targetPoints
@@ -124,27 +353,54 @@ async function placeOrder(order, signalId = null) {
         ? stopLossPoints
         : 100;
 
+    const orderType = String(rawOrderType).trim().toUpperCase();
+    const normalizedOrderType =
+      orderType === "LMT" ? "LIMIT" :
+      orderType === "SLM" || orderType === "SL-M" ? "SL" :
+      orderType;
+
+    const orderTypeMap = {
+      MARKET: { pt: "MKT", pr: "0" },
+      LIMIT: { pt: "LMT", pr: String(priceValue > 0 ? priceValue : 0) },
+      SL: { pt: "SL", pr: String(priceValue > 0 ? priceValue : 0) }
+    };
+
+    if (
+      ["LIMIT", "SL"].includes(normalizedOrderType) &&
+      (!priceValue || isNaN(priceValue))
+    ) {
+      throw new Error("Limit/stop orders require a valid PRICE value");
+    }
+
     const productMap = {
       CNC: "CNC",
       MIS: "MIS",
-      NRML: "NRML"
+      NRML: "NRML",
+      BO: "BO",
+      CO: "CO"
     };
+
+    const validityMap = {
+      DAY: "DAY",
+      IOC: "IOC",
+      GFD: "GFD"
+    };
+
+    const orderSpec = orderTypeMap[normalizedOrderType] || orderTypeMap.MARKET;
 
     const jData = {
       am: amFlag,
       dq: "0",
       es: instrument?.es || "nse_fo",
       mp: "0",
-      pc: productMap[
-        String(order?.product || "")
-          .trim()
-          .toUpperCase()
-      ] || "CNC",
+      pc:
+        productMap[String(rawProduct).trim().toUpperCase()] || "CNC",
       pf: "N",
-      pr: "0",
-      pt: "MKT",
+      pr: orderSpec.pr,
+      pt: orderSpec.pt,
       qt: qtyFinal,
-      rt: "DAY",
+      rt:
+        validityMap[String(rawValidity).trim().toUpperCase()] || "DAY",
       tp: "0",
       ts: symbol,
       tt: action === "BUY" ? "B" : "S"
@@ -167,6 +423,7 @@ async function placeOrder(order, signalId = null) {
           order,
           jData
         },
+        childOrders: [],
         status: "PENDING",
         placedAt: new Date()
       });
@@ -174,45 +431,17 @@ async function placeOrder(order, signalId = null) {
       console.error(`❌ BrokerOrder create failed: ${e.message}`);
     }
 
-
-    // ==============================
-    // 📦 API CALL (with one-shot 401 auto-retry)
-    // ==============================
     let response;
     let retriedAfterRefresh = false;
 
-    const doPost = async (authToken, sidVal, baseUrlArg) => {
-      const targetBase = baseUrlArg || getBaseUrl();
-      const orderUrl = `${targetBase}/quick/order/rule/ms/place`;
-
-      const payload = qs.stringify({
-        jData: JSON.stringify(jData),
-        jKey: authToken
-      });
-
-      const headers = {
-        Accept: "application/json",
-        Auth: authToken,
-        Sid: sidVal,
-        "neo-fin-key": "neotradeapi",
-        "Content-Type": "application/x-www-form-urlencoded"
-      };
-
-      return axios.post(orderUrl, payload, {
-        headers,
-        timeout: 10000
-      });
-    };
-
     try {
-      response = await doPost(sessionToken, sid, baseUrl);
+      response = await postKotakOrder(jData, sessionToken, sid, baseUrl);
     } catch (err) {
       if (err.response?.status === 403) {
         console.error("🔴 403 Forbidden - Possible reasons: expired session, invalid Sid, rate limit, or payload format");
         console.error("Response:", err.response?.data);
       }
 
-      // If unauthorized, try one refresh via autoLogin and retry once
       if (err.response?.status === 401 && !retriedAfterRefresh) {
         retriedAfterRefresh = true;
         try {
@@ -221,7 +450,7 @@ async function placeOrder(order, signalId = null) {
             const newToken = getSessionToken();
             const newSid = getSid();
             const newBase = getBaseUrl();
-            response = await doPost(newToken, newSid, newBase);
+            response = await postKotakOrder(jData, newToken, newSid, newBase);
           } else {
             console.error("Auto-login did not refresh session:", refreshResult);
           }
@@ -248,12 +477,42 @@ async function placeOrder(order, signalId = null) {
         ? "REJECTED"
         : "SUCCESS";
 
+    let childOrders = [];
+
     if (brokerOrderDoc?._id) {
+      const fillPrice = Number(
+        orderData?.fillPrice ||
+        orderData?.avgPrice ||
+        orderData?.price ||
+        orderData?.lastPrice ||
+        0
+      );
+
+      if (orderData && statusValue === "SUCCESS") {
+        childOrders = await placeGttOcoChildOrders({
+          order,
+          instrument,
+          action,
+          qtyFinal,
+          productCode: productMap[String(rawProduct).trim().toUpperCase()] || "CNC",
+          validity: validityMap[String(rawValidity).trim().toUpperCase()] || "DAY",
+          fillPrice: fillPrice > 0 ? fillPrice : 0,
+          targetPoints: targetPointsFinal,
+          stopLossPoints: stopLossPointsFinal,
+          amFlag: amFlag === "YES",
+          sessionToken,
+          sid,
+          baseUrl,
+          brokerOrderId: brokerOrderDoc._id
+        });
+      }
+
       await BrokerOrder.findByIdAndUpdate(brokerOrderDoc._id, {
         brokerOrderId: orderData?.nOrdNo || orderData?.orderId || null,
         brokerStatus,
         response: orderData,
         status: statusValue,
+        childOrders,
         completedAt: new Date()
       });
     }
@@ -443,14 +702,6 @@ async function getTradeLog() {
     return [];
   }
 }
-
-// ==============================
-// EXPORT
-// ==============================
-module.exports = {
-  placeOrder,
-  getTradeLog
-};
 
 // ==============================
 // Exit existing broker position then open new one (atomic helper)
