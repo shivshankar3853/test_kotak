@@ -98,17 +98,26 @@ function extractTradeBookEntries(payload = {}) {
 function findTradeBookEntryForTrade(trade = {}, tradeBookEntries = []) {
   const tradeOrderId = String(trade?.orderId || trade?.brokerOrderId || "").trim();
   const tradeInstrument = normalizeSymbol(trade?.instrument || trade?.symbol || trade?.ts || "");
+  const tradeSide = String(trade?.side || trade?.transactionType || trade?.action || "").trim().toUpperCase();
+  const tradeQuantity = Number(trade?.quantity || trade?.qty || 0);
 
   for (const entry of tradeBookEntries) {
-    const entryOrderId = String(entry?.orderId || "").trim();
+    const entryOrderId = String(entry?.orderId || entry?.raw?.orderId || entry?.raw?.nOrdNo || "").trim();
     const entryInstrument = normalizeSymbol(entry?.instrument || entry?.raw?.trdSym || entry?.raw?.symbol || "");
+    const entrySide = String(entry?.side || entry?.raw?.buySell || entry?.raw?.side || entry?.raw?.transactionType || entry?.raw?.action || "").trim().toUpperCase();
+    const entryQuantity = Number(entry?.quantity || entry?.raw?.qty || entry?.raw?.quantity || entry?.raw?.tradeQty || 0);
 
     if (tradeOrderId && entryOrderId && tradeOrderId === entryOrderId) {
       return entry;
     }
 
     if (tradeInstrument && entryInstrument && tradeInstrument === entryInstrument) {
-      return entry;
+      const sameSide = !tradeSide || !entrySide || tradeSide === entrySide;
+      const sameQuantity = !tradeQuantity || !entryQuantity || tradeQuantity === entryQuantity;
+
+      if (sameSide && sameQuantity) {
+        return entry;
+      }
     }
   }
 
