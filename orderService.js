@@ -34,7 +34,8 @@ function buildOrderPayload({
   gtt = false,
   oco = false,
   orderTag = null,
-  triggerPrice = null
+  triggerPrice = null,
+  ptValue = undefined
 }) {
   const payload = {
     am: amFlag ? "YES" : "NO",
@@ -44,7 +45,7 @@ function buildOrderPayload({
     pc: productCode,
     pf: "N",
     pr: String(price || "0"),
-      pt: gtt && triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : orderType,
+      pt: ptValue !== undefined ? ptValue : (gtt && triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : orderType),
     qt: qtyFinal,
     rt: validity || "DAY",
     tp: triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : "0",
@@ -113,6 +114,7 @@ function buildChildOrderPayloads({
         productCode,
         validity,
           orderType: "MKT",
+          ptValue: "LMT",
         price: targetPrice,
         amFlag: false,
         gtt: true,
@@ -131,6 +133,7 @@ function buildChildOrderPayloads({
         productCode,
         validity,
           orderType: "MKT",
+          ptValue: "SL",
         price: stopLossPrice,
         amFlag: false,
         gtt: true,
@@ -149,6 +152,7 @@ function buildChildOrderPayloads({
         productCode,
         validity,
           orderType: "MKT",
+          ptValue: "LMT",
         price: targetPrice,
         amFlag: false,
         gtt: true,
@@ -167,6 +171,7 @@ function buildChildOrderPayloads({
         productCode,
         validity,
           orderType: "MKT",
+          ptValue: "SL",
         price: stopLossPrice,
         amFlag: false,
         gtt: true,
