@@ -46,7 +46,7 @@ function buildOrderPayload({
     pr: String(price || "0"),
     pt: orderType,
     qt: qtyFinal,
-    rt: gtt ? "GTT" : validity || "DAY",
+    rt: validity || "DAY",
     tp: orderType === "SL" && triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : "0",
     ts: instrument?.ts,
     tt: action === "BUY" ? "B" : "S"
