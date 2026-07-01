@@ -67,7 +67,35 @@ async function resolveFillPrice({
   return 0;
 }
 
-async function resolveBrokerEntryPrice({
+function normalizeBrokerOrderStatus(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function isBrokerOrderComplete(orderDetails = {}) {
+  const status = normalizeBrokerOrderStatus(
+    orderDetails?.status ||
+    orderDetails?.stat ||
+    orderDetails?.orderStatus ||
+    orderDetails?.order_status ||
+    orderDetails?.ordStatus ||
+    orderDetails?.ord_status ||
+    orderDetails?.executionStatus
+  );
+
+  return [
+    "COMPLETE",
+    "COMPLETED",
+    "FILLED",
+    "FULLY_FILLED",
+    "EXECUTED",
+    "TRADED",
+    "SUCCESS"
+  ].some((token) => status.includes(token));
+}
+
+async function fetchBrokerOrderDetails({
   orderId,
   sessionToken,
   sid,
@@ -75,7 +103,7 @@ async function resolveBrokerEntryPrice({
   axiosInstance = require("axios")
 } = {}) {
   if (!orderId || !sessionToken || !sid || !baseUrl) {
-    return 0;
+    return null;
   }
 
   const orderUrl = `${baseUrl}/quick/order/rule/ms/getOrderInfo`;
@@ -95,33 +123,95 @@ async function resolveBrokerEntryPrice({
   try {
     const response = await axiosInstance.post(orderUrl, payload, { headers, timeout: 10000 });
     const responseBody = response?.data && typeof response.data === "object" ? response.data : {};
-    const orderDetails = responseBody?.data || responseBody?.order || responseBody || {};
-
-    const candidates = [
-      orderDetails?.avgPrice,
-      orderDetails?.fillPrice,
-      orderDetails?.price,
-      orderDetails?.lastPrice,
-      orderDetails?.avg_price,
-      orderDetails?.fill_price,
-      orderDetails?.entryPrice,
-      orderDetails?.entry_price
-    ];
-
-    for (const candidate of candidates) {
-      const numericValue = Number(candidate);
-      if (Number.isFinite(numericValue) && numericValue > 0) {
-        return numericValue;
-      }
-    }
+    return responseBody?.data || responseBody?.order || responseBody || null;
   } catch (_) {
-    // ignore and fall back to other sources
+    return null;
+  }
+}
+
+async function resolveBrokerEntryPrice({
+  orderId,
+  sessionToken,
+  sid,
+  baseUrl,
+  axiosInstance = require("axios")
+} = {}) {
+  const orderDetails = await fetchBrokerOrderDetails({
+    orderId,
+    sessionToken,
+    sid,
+    baseUrl,
+    axiosInstance
+  });
+
+  if (!orderDetails) {
+    return 0;
+  }
+
+  const candidates = [
+    orderDetails?.avgPrice,
+    orderDetails?.fillPrice,
+    orderDetails?.price,
+    orderDetails?.lastPrice,
+    orderDetails?.avg_price,
+    orderDetails?.fill_price,
+    orderDetails?.entryPrice,
+    orderDetails?.entry_price,
+    orderDetails?.averagePrice,
+    orderDetails?.average_price,
+    orderDetails?.tradePrice,
+    orderDetails?.trade_price
+  ];
+
+  for (const candidate of candidates) {
+    const numericValue = Number(candidate);
+    if (Number.isFinite(numericValue) && numericValue > 0) {
+      return numericValue;
+    }
   }
 
   return 0;
 }
 
+async function waitForBrokerOrderCompletion({
+  orderId,
+  sessionToken,
+  sid,
+  baseUrl,
+  axiosInstance = require("axios"),
+  pollIntervalMs = 1000,
+  maxPolls = 30
+} = {}) {
+  let lastOrderDetails = null;
+
+  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+    const orderDetails = await fetchBrokerOrderDetails({
+      orderId,
+      sessionToken,
+      sid,
+      baseUrl,
+      axiosInstance
+    });
+
+    if (orderDetails) {
+      lastOrderDetails = orderDetails;
+      if (isBrokerOrderComplete(orderDetails)) {
+        return orderDetails;
+      }
+    }
+
+    if (attempt < maxPolls - 1) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  }
+
+  return lastOrderDetails;
+}
+
 module.exports = {
   resolveFillPrice,
-  resolveBrokerEntryPrice
+  resolveBrokerEntryPrice,
+  fetchBrokerOrderDetails,
+  waitForBrokerOrderCompletion,
+  isBrokerOrderComplete
 };

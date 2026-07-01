@@ -20,7 +20,7 @@ const {
 } = require("./signal");
 
 const { getTickAsync } = require("./wsService");
-const { resolveFillPrice, resolveBrokerEntryPrice } = require("./fillPriceResolver");
+const { resolveFillPrice, resolveBrokerEntryPrice, waitForBrokerOrderCompletion } = require("./fillPriceResolver");
 
 function buildOrderPayload({
   instrument,
@@ -483,8 +483,17 @@ async function placeOrder(order, signalId = null) {
 
     if (brokerOrderDoc?._id) {
       const brokerOrderId = orderData?.nOrdNo || orderData?.orderId || null;
+      let brokerOrderDetails = null;
 
       if (brokerOrderId && statusValue === "SUCCESS") {
+        console.log(`⏳ Waiting for broker order completion for ${brokerOrderId}...`);
+        brokerOrderDetails = await waitForBrokerOrderCompletion({
+          orderId: brokerOrderId,
+          sessionToken,
+          sid,
+          baseUrl
+        });
+
         fillPrice = await resolveBrokerEntryPrice({
           orderId: brokerOrderId,
           sessionToken,
@@ -518,7 +527,10 @@ async function placeOrder(order, signalId = null) {
 
       if (brokerOrderId && fillPrice > 0) {
         try {
-          await BrokerOrder.findByIdAndUpdate(brokerOrderDoc._id, { entryPrice: fillPrice });
+          await BrokerOrder.findByIdAndUpdate(brokerOrderDoc._id, {
+            entryPrice: fillPrice,
+            brokerStatus: brokerOrderDetails?.status || brokerOrderDetails?.stat || brokerOrderDetails?.orderStatus || brokerOrderDetails?.order_status || brokerStatus
+          });
         } catch (updateErr) {
           console.error("❌ Failed to save broker entry price:", updateErr.message || updateErr);
         }
