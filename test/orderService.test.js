@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { shouldPlaceChildOrdersForConfirmation, selectLatestBrokerOrderForPlacement, resolvePriceWithTickFirst } = require('../orderService');
+const { shouldPlaceChildOrdersForConfirmation, selectLatestBrokerOrderForPlacement, resolvePriceWithTickFirst, buildChildOrderPayloads } = require('../orderService');
 
 test('shouldPlaceChildOrdersForConfirmation waits for completed broker confirmation before placing child orders', () => {
   const brokerOrder = { childOrdersPlaced: false, brokerOrderId: '260701000630614' };
@@ -31,4 +31,24 @@ test('resolvePriceWithTickFirst prefers the websocket tick before falling back t
   });
 
   assert.equal(price, 105);
+});
+
+test('buildChildOrderPayloads creates validated TP and SL GTT payloads after execution', () => {
+  const payloads = buildChildOrderPayloads({
+    instrument: { es: 'nse_fo', ts: 'TEST' },
+    action: 'BUY',
+    qtyFinal: '100',
+    productCode: 'CNC',
+    validity: 'DAY',
+    fillPrice: 100,
+    targetPoints: 10,
+    stopLossPoints: 5
+  });
+
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[0].tag, 'TP');
+  assert.equal(payloads[0].jData.pr, '110');
+  assert.equal(payloads[1].tag, 'SL');
+  assert.equal(payloads[1].jData.pr, '95');
+  assert.equal(payloads[1].jData.gtt, 'Y');
 });

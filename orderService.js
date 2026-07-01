@@ -70,6 +70,111 @@ function calculateChildPrices({ action, fillPrice, targetPoints, stopLossPoints 
   return { targetPrice, stopLossPrice };
 }
 
+function buildChildOrderPayloads({
+  instrument,
+  action,
+  qtyFinal,
+  productCode,
+  validity,
+  fillPrice,
+  targetPoints,
+  stopLossPoints
+}) {
+  const hasTP = Number.isFinite(targetPoints) && targetPoints > 0;
+  const hasSL = Number.isFinite(stopLossPoints) && stopLossPoints > 0;
+
+  if (!hasTP && !hasSL) {
+    return [];
+  }
+
+  if (!fillPrice || isNaN(fillPrice) || fillPrice <= 0) {
+    throw new Error("fillPrice is required before building child GTT/OCO payloads");
+  }
+
+  const { targetPrice, stopLossPrice } = calculateChildPrices({
+    action,
+    fillPrice,
+    targetPoints,
+    stopLossPoints
+  });
+
+  const isBuy = action === "BUY";
+  const oppositeAction = isBuy ? "SELL" : "BUY";
+  const childOrders = [];
+
+  if (hasTP && hasSL) {
+    childOrders.push({
+      tag: "TP",
+      jData: buildOrderPayload({
+        instrument,
+        action: oppositeAction,
+        qtyFinal,
+        productCode,
+        validity,
+        orderType: "LMT",
+        price: targetPrice,
+        amFlag: false,
+        gtt: true,
+        oco: true,
+        orderTag: "TP"
+      })
+    });
+
+    childOrders.push({
+      tag: "SL",
+      jData: buildOrderPayload({
+        instrument,
+        action: oppositeAction,
+        qtyFinal,
+        productCode,
+        validity,
+        orderType: "SL",
+        price: stopLossPrice,
+        amFlag: false,
+        gtt: true,
+        oco: true,
+        orderTag: "SL"
+      })
+    });
+  } else if (hasTP) {
+    childOrders.push({
+      tag: "TP",
+      jData: buildOrderPayload({
+        instrument,
+        action: oppositeAction,
+        qtyFinal,
+        productCode,
+        validity,
+        orderType: "LMT",
+        price: targetPrice,
+        amFlag: false,
+        gtt: true,
+        oco: false,
+        orderTag: "TP"
+      })
+    });
+  } else if (hasSL) {
+    childOrders.push({
+      tag: "SL",
+      jData: buildOrderPayload({
+        instrument,
+        action: oppositeAction,
+        qtyFinal,
+        productCode,
+        validity,
+        orderType: "SL",
+        price: stopLossPrice,
+        amFlag: false,
+        gtt: true,
+        oco: false,
+        orderTag: "SL"
+      })
+    });
+  }
+
+  return childOrders;
+}
+
 function selectLatestBrokerOrderForPlacement({ currentBrokerOrder, targetSymbol, latestBrokerOrder }) {
   if (!targetSymbol) {
     return currentBrokerOrder || latestBrokerOrder || null;
@@ -367,97 +472,19 @@ async function placeGttOcoChildOrders({
   baseUrl,
   brokerOrderId
 }) {
-  const hasTP = Number.isFinite(targetPoints) && targetPoints > 0;
-  const hasSL = Number.isFinite(stopLossPoints) && stopLossPoints > 0;
-
-  if (!hasTP && !hasSL) {
-    return [];
-  }
-
-  if (!fillPrice || isNaN(fillPrice) || fillPrice <= 0) {
-    console.log("⚠️ Skipping GTT/OCO because fill price is unavailable");
-    return [];
-  }
-
-  const { targetPrice, stopLossPrice } = calculateChildPrices({
+  const childOrders = buildChildOrderPayloads({
+    instrument,
     action,
+    qtyFinal,
+    productCode,
+    validity,
     fillPrice,
     targetPoints,
     stopLossPoints
   });
 
-  const isBuy = action === "BUY";
-  const oppositeAction = isBuy ? "SELL" : "BUY";
-  const childOrders = [];
-
-  if (hasTP && hasSL) {
-    childOrders.push({
-      tag: "TP",
-      jData: buildOrderPayload({
-        instrument,
-        action: oppositeAction,
-        qtyFinal,
-        productCode,
-        validity,
-        orderType: "LMT",
-        price: targetPrice,
-        amFlag: false,
-        gtt: true,
-        oco: true,
-        orderTag: "TP"
-      })
-    });
-
-    childOrders.push({
-      tag: "SL",
-      jData: buildOrderPayload({
-        instrument,
-        action: oppositeAction,
-        qtyFinal,
-        productCode,
-        validity,
-        orderType: "SL",
-        price: stopLossPrice,
-        amFlag: false,
-        gtt: true,
-        oco: true,
-        orderTag: "SL"
-      })
-    });
-  } else if (hasTP) {
-    childOrders.push({
-      tag: "TP",
-      jData: buildOrderPayload({
-        instrument,
-        action: oppositeAction,
-        qtyFinal,
-        productCode,
-        validity,
-        orderType: "LMT",
-        price: targetPrice,
-        amFlag: false,
-        gtt: true,
-        oco: false,
-        orderTag: "TP"
-      })
-    });
-  } else if (hasSL) {
-    childOrders.push({
-      tag: "SL",
-      jData: buildOrderPayload({
-        instrument,
-        action: oppositeAction,
-        qtyFinal,
-        productCode,
-        validity,
-        orderType: "SL",
-        price: stopLossPrice,
-        amFlag: false,
-        gtt: true,
-        oco: false,
-        orderTag: "SL"
-      })
-    });
+  if (!childOrders.length) {
+    return [];
   }
 
   const childResults = [];
@@ -1074,6 +1101,7 @@ module.exports = {
   shouldPlaceChildOrdersForConfirmation,
   resolveBrokerConfirmationPrice,
   resolvePriceWithTickFirst,
+  buildChildOrderPayloads,
   placeGttOcoChildOrdersOnConfirmation,
   placeGttOcoChildOrders,
   selectLatestBrokerOrderForPlacement
