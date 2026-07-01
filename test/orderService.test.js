@@ -58,3 +58,21 @@ test('buildChildOrderPayloads creates validated TP and SL GTT payloads after exe
   assert.equal(payloads[1].jData.gtt, 'Y');
   assert.equal(payloads[1].jData.rt, 'DAY');
 });
+
+test('buildChildOrderPayloads uses the requested child-order type codes', () => {
+  const payloads = buildChildOrderPayloads({
+    instrument: { es: 'nse_fo', ts: 'TEST' },
+    action: 'BUY',
+    qtyFinal: '100',
+    productCode: 'CNC',
+    validity: 'DAY',
+    fillPrice: 100,
+    targetPoints: 10,
+    stopLossPoints: 5,
+    childOrderType: 'SL-M'
+  });
+
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[0].jData.pt, 'SL-M');
+  assert.equal(payloads[1].jData.pt, 'SL-M');
+});

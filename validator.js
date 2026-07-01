@@ -47,13 +47,16 @@ function validateSignal(s) {
   OT = OT ? String(OT).trim().toUpperCase() : "MARKET";
 
   if (OT === "LMT") {
-    OT = "LIMIT";
+    OT = "L";
   }
   if (OT === "SLM" || OT === "SL-M") {
-    OT = "SL";
+    OT = "SL-M";
+  }
+  if (OT === "MARKET") {
+    OT = "MKT";
   }
 
-  if (!["MARKET", "LIMIT", "SL"].includes(OT)) {
+  if (!["MKT", "L", "SL", "SL-M"].includes(OT)) {
     return { ok: false, error: "Invalid order type" };
   }
 

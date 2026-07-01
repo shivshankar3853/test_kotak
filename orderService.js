@@ -22,6 +22,30 @@ const {
 const { getTickAsync } = require("./wsService");
 const { extractTradeBookEntries, findTradeBookEntryForTrade, toFrontendTrade } = require("./tradeBookUtils");
 
+function normalizeOrderTypeCode(orderType) {
+  const rawType = String(orderType || "").trim().toUpperCase();
+
+  if (!rawType) {
+    return "MKT";
+  }
+
+  const normalizedMap = {
+    LMT: "L",
+    LIMIT: "L",
+    L: "L",
+    MKT: "MKT",
+    MARKET: "MKT",
+    SLM: "SL-M",
+    "SL-M": "SL-M",
+    SL: "SL",
+    STOPLOSS: "SL",
+    STOP_LOSS: "SL",
+    "SL-MARKET": "SL-M"
+  };
+
+  return normalizedMap[rawType] || rawType;
+}
+
 function buildOrderPayload({
   instrument,
   action,
@@ -80,7 +104,8 @@ function buildChildOrderPayloads({
   validity,
   fillPrice,
   targetPoints,
-  stopLossPoints
+  stopLossPoints,
+  childOrderType = "MKT"
 }) {
   const hasTP = Number.isFinite(targetPoints) && targetPoints > 0;
   const hasSL = Number.isFinite(stopLossPoints) && stopLossPoints > 0;
@@ -100,6 +125,7 @@ function buildChildOrderPayloads({
     stopLossPoints
   });
 
+  const normalizedChildOrderType = normalizeOrderTypeCode(childOrderType);
   const isBuy = action === "BUY";
   const oppositeAction = isBuy ? "SELL" : "BUY";
   const childOrders = [];
@@ -113,8 +139,8 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-          orderType: "MKT",
-          ptValue: "MKT",
+        orderType: normalizedChildOrderType,
+        ptValue: normalizedChildOrderType,
         price: targetPrice,
         amFlag: false,
         gtt: true,
@@ -132,8 +158,8 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-          orderType: "MKT",
-          ptValue: "MKT",
+        orderType: normalizedChildOrderType,
+        ptValue: normalizedChildOrderType,
         price: stopLossPrice,
         amFlag: false,
         gtt: true,
@@ -151,8 +177,8 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-          orderType: "MKT",
-          ptValue: "MKT",
+        orderType: normalizedChildOrderType,
+        ptValue: normalizedChildOrderType,
         price: targetPrice,
         amFlag: false,
         gtt: true,
@@ -170,8 +196,8 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-          orderType: "MKT",
-          ptValue: "MKT",
+        orderType: normalizedChildOrderType,
+        ptValue: normalizedChildOrderType,
         price: stopLossPrice,
         amFlag: false,
         gtt: true,
@@ -482,6 +508,7 @@ async function placeGttOcoChildOrders({
   baseUrl,
   brokerOrderId
 }) {
+  const rawChildOrderType = order?.order_type || order?.OT || order?.orderType || order?.type || "MKT";
   const childOrders = buildChildOrderPayloads({
     instrument,
     action,
@@ -490,7 +517,8 @@ async function placeGttOcoChildOrders({
     validity,
     fillPrice,
     targetPoints,
-    stopLossPoints
+    stopLossPoints,
+    childOrderType: rawChildOrderType
   });
 
   if (!childOrders.length) {
@@ -680,19 +708,17 @@ async function placeOrder(order, signalId = null) {
         : 0;
 
     const orderType = String(rawOrderType).trim().toUpperCase();
-    const normalizedOrderType =
-      orderType === "LMT" ? "LIMIT" :
-      orderType === "SLM" || orderType === "SL-M" ? "SL" :
-      orderType;
+    const normalizedOrderType = normalizeOrderTypeCode(orderType);
 
     const orderTypeMap = {
-      MARKET: { pt: "MKT", pr: "0" },
-      LIMIT: { pt: "LMT", pr: String(priceValue > 0 ? priceValue : 0) },
-      SL: { pt: "SL", pr: String(priceValue > 0 ? priceValue : 0) }
+      MKT: { pt: "MKT", pr: "0" },
+      L: { pt: "L", pr: String(priceValue > 0 ? priceValue : 0) },
+      SL: { pt: "SL", pr: String(priceValue > 0 ? priceValue : 0) },
+      "SL-M": { pt: "SL-M", pr: "0" }
     };
 
     if (
-      ["LIMIT", "SL"].includes(normalizedOrderType) &&
+      ["L", "SL", "SL-M"].includes(normalizedOrderType) &&
       (!priceValue || isNaN(priceValue))
     ) {
       throw new Error("Limit/stop orders require a valid PRICE value");
@@ -712,7 +738,7 @@ async function placeOrder(order, signalId = null) {
       GFD: "GFD"
     };
 
-    const orderSpec = orderTypeMap[normalizedOrderType] || orderTypeMap.MARKET;
+    const orderSpec = orderTypeMap[normalizedOrderType] || orderTypeMap.MKT;
 
     const jData = {
       am: amFlag,
