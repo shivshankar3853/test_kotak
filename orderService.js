@@ -70,6 +70,29 @@ function calculateChildPrices({ action, fillPrice, targetPoints, stopLossPoints 
   return { targetPrice, stopLossPrice };
 }
 
+function selectLatestBrokerOrderForPlacement({ currentBrokerOrder, targetSymbol, latestBrokerOrder }) {
+  if (!targetSymbol) {
+    return currentBrokerOrder || latestBrokerOrder || null;
+  }
+
+  if (!latestBrokerOrder) {
+    return currentBrokerOrder || null;
+  }
+
+  const latestSymbol = String(latestBrokerOrder?.symbol || "").trim();
+  if (latestSymbol && latestSymbol !== targetSymbol) {
+    return currentBrokerOrder || null;
+  }
+
+  const currentId = currentBrokerOrder?._id?.toString?.() || "";
+  const latestId = latestBrokerOrder?._id?.toString?.() || "";
+  if (!currentId || currentId !== latestId) {
+    return latestBrokerOrder;
+  }
+
+  return currentBrokerOrder || latestBrokerOrder || null;
+}
+
 function shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData, resolvedEntryPrice = 0 }) {
   if (!brokerOrder || brokerOrder.childOrdersPlaced) {
     return false;
@@ -159,6 +182,23 @@ async function placeGttOcoChildOrdersOnConfirmation({
   baseUrl
 }) {
   let persistedBrokerOrder = brokerOrder;
+  const targetSymbol = String(brokerOrder?.symbol || orderStreamData?.symbol || "").trim();
+
+  if (targetSymbol) {
+    try {
+      const latestOrder = await BrokerOrder.findOne({
+        symbol: targetSymbol,
+        status: { $in: ["PENDING_CONFIRMATION", "PENDING", "SUCCESS", "COMPLETED", "OPEN"] }
+      }).sort({ placedAt: -1, createdAt: -1 });
+      persistedBrokerOrder = selectLatestBrokerOrderForPlacement({
+        currentBrokerOrder: persistedBrokerOrder,
+        targetSymbol,
+        latestBrokerOrder: latestOrder
+      });
+    } catch (lookupErr) {
+      console.log("⚠️ Could not resolve latest broker order:", lookupErr?.message || lookupErr);
+    }
+  }
   let confirmedEntryPrice = Number(orderStreamData?.entryPrice || brokerOrder?.entryPrice || 0);
 
   if (!confirmedEntryPrice || confirmedEntryPrice <= 0) {
@@ -193,12 +233,16 @@ async function placeGttOcoChildOrdersOnConfirmation({
     return null;
   }
 
-  const orderPayload = brokerOrder?.requestPayload?.order || {};
-  const action = String(brokerOrder?.side || orderPayload?.transaction_type || "")
+  if (targetSymbol && persistedBrokerOrder?.symbol && String(persistedBrokerOrder.symbol).trim() !== targetSymbol) {
+    console.log(`⚠️ Latest broker order symbol ${persistedBrokerOrder.symbol} did not match target ${targetSymbol}; using the latest matching record`);
+  }
+
+  const orderPayload = persistedBrokerOrder?.requestPayload?.order || brokerOrder?.requestPayload?.order || {};
+  const action = String(persistedBrokerOrder?.side || brokerOrder?.side || orderPayload?.transaction_type || "")
     .trim()
     .toUpperCase();
 
-  const rawSymbol = brokerOrder?.symbol || orderPayload?.TS || orderStreamData?.symbol || "";
+  const rawSymbol = persistedBrokerOrder?.symbol || brokerOrder?.symbol || orderPayload?.TS || orderStreamData?.symbol || "";
   const instrument = findInstrument(rawSymbol);
   const lotSize = Number(instrument?.ls || 0);
   const quantity = Number(brokerOrder?.quantity || orderPayload?.quantity || 0);
@@ -211,8 +255,8 @@ async function placeGttOcoChildOrdersOnConfirmation({
   const targetPointsFinal = Number.isFinite(targetPoints) && targetPoints > 0 ? targetPoints : 10;
   const stopLossPointsFinal = Number.isFinite(stopLossPoints) && stopLossPoints > 0 ? stopLossPoints : 100;
 
-  const productCode = brokerOrder?.requestPayload?.jData?.pc || "CNC";
-  const validity = brokerOrder?.validity || orderPayload?.validity || orderPayload?.VL || "DAY";
+  const productCode = persistedBrokerOrder?.requestPayload?.jData?.pc || brokerOrder?.requestPayload?.jData?.pc || "CNC";
+  const validity = persistedBrokerOrder?.validity || brokerOrder?.validity || orderPayload?.validity || orderPayload?.VL || "DAY";
   const fillPrice = Number(confirmedEntryPrice || orderStreamData?.entryPrice || persistedBrokerOrder?.entryPrice || brokerOrder?.entryPrice || 0);
 
   console.log(`🧩 Placing child GTT/OCO orders for ${rawSymbol} using entry price ${fillPrice}`);
@@ -231,11 +275,11 @@ async function placeGttOcoChildOrdersOnConfirmation({
     sessionToken,
     sid,
     baseUrl,
-    brokerOrderId: brokerOrder._id
+    brokerOrderId: persistedBrokerOrder?._id || brokerOrder?._id
   });
 
   try {
-    await BrokerOrder.findByIdAndUpdate(brokerOrder._id, {
+    await BrokerOrder.findByIdAndUpdate(persistedBrokerOrder?._id || brokerOrder?._id, {
       childOrdersPlaced: true,
       childOrdersPlacedAt: new Date(),
       entryPrice: fillPrice > 0 ? fillPrice : undefined,
@@ -983,5 +1027,6 @@ module.exports = {
   shouldPlaceChildOrdersForConfirmation,
   resolveBrokerConfirmationPrice,
   placeGttOcoChildOrdersOnConfirmation,
-  placeGttOcoChildOrders
+  placeGttOcoChildOrders,
+  selectLatestBrokerOrderForPlacement
 };

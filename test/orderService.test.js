@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { shouldPlaceChildOrdersForConfirmation } = require('../orderService');
+const { shouldPlaceChildOrdersForConfirmation, selectLatestBrokerOrderForPlacement } = require('../orderService');
 
 test('shouldPlaceChildOrdersForConfirmation waits for completed broker confirmation before placing child orders', () => {
   const brokerOrder = { childOrdersPlaced: false, brokerOrderId: '260701000630614' };
@@ -11,4 +11,13 @@ test('shouldPlaceChildOrdersForConfirmation waits for completed broker confirmat
   assert.equal(shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData: { orderStatus: 'OPEN', entryPrice: 100 } }), true);
   assert.equal(shouldPlaceChildOrdersForConfirmation({ brokerOrder: { childOrdersPlaced: true, brokerOrderId: '260701000630614' }, orderStreamData: completedOrder }), false);
   assert.equal(shouldPlaceChildOrdersForConfirmation({ brokerOrder: { childOrdersPlaced: false, brokerOrderId: '260701000630614' }, orderStreamData: { orderId: '260701000630614' }, resolvedEntryPrice: 100 }), true);
+});
+
+test('selectLatestBrokerOrderForPlacement prefers the newest matching broker order', () => {
+  const currentOrder = { _id: 'old', symbol: 'TEST' };
+  const latestOrder = { _id: 'new', symbol: 'TEST' };
+
+  const result = selectLatestBrokerOrderForPlacement({ currentBrokerOrder: currentOrder, targetSymbol: 'TEST', latestBrokerOrder: latestOrder });
+
+  assert.equal(result._id, 'new');
 });
