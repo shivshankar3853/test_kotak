@@ -491,6 +491,16 @@ async function placeGttOcoChildOrders({
 
   for (const child of childOrders) {
     try {
+      console.log("📦 GTT child payload before placement:", JSON.stringify({
+        tag: child.tag,
+        payload: child.jData,
+        fillPrice,
+        action,
+        qtyFinal,
+        productCode,
+        validity
+      }, null, 2));
+
       const response = await postKotakOrder(child.jData, sessionToken, sid, baseUrl);
       const responseBody = response?.data && typeof response.data === "object" ? response.data : {};
       childResults.push({
