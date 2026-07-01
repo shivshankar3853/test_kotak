@@ -155,6 +155,83 @@ async function fetchBrokerOrderDetails({
   }
 }
 
+async function fetchBrokerTradeBook({
+  sessionToken,
+  sid,
+  baseUrl,
+  axiosInstance = require("axios")
+} = {}) {
+  if (!sessionToken || !sid || !baseUrl) {
+    return null;
+  }
+
+  const tradeBookUrl = `${baseUrl}/quick/user/trades`;
+  const headers = {
+    Accept: "application/json",
+    Auth: sessionToken,
+    Sid: sid,
+    "neo-fin-key": "neotradeapi"
+  };
+
+  try {
+    const response = await axiosInstance.get(tradeBookUrl, { headers, timeout: 10000 });
+    const responseBody = response?.data && typeof response.data === "object" ? response.data : {};
+    console.log("[tradebook-debug] Raw trade book response:", JSON.stringify(responseBody, null, 2));
+    return responseBody?.data || responseBody?.trades || responseBody?.orders || responseBody || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function extractTradeBookEntryPrice(tradeBookPayload = {}, orderId = null) {
+  const candidates = [];
+
+  if (Array.isArray(tradeBookPayload)) {
+    candidates.push(...tradeBookPayload);
+  } else if (tradeBookPayload && typeof tradeBookPayload === "object") {
+    if (Array.isArray(tradeBookPayload?.data)) {
+      candidates.push(...tradeBookPayload.data);
+    }
+    if (Array.isArray(tradeBookPayload?.trades)) {
+      candidates.push(...tradeBookPayload.trades);
+    }
+    if (Array.isArray(tradeBookPayload?.orders)) {
+      candidates.push(...tradeBookPayload.orders);
+    }
+    candidates.push(tradeBookPayload);
+  }
+
+  for (const candidate of candidates) {
+    if (orderId && candidate?.nOrdNo && String(candidate.nOrdNo) !== String(orderId)) {
+      continue;
+    }
+
+    const priceCandidates = [
+      candidate?.avgPrice,
+      candidate?.averagePrice,
+      candidate?.fillPrice,
+      candidate?.price,
+      candidate?.lastPrice,
+      candidate?.avg_price,
+      candidate?.average_price,
+      candidate?.fill_price,
+      candidate?.tradePrice,
+      candidate?.trade_price,
+      candidate?.entryPrice,
+      candidate?.entry_price
+    ];
+
+    for (const priceCandidate of priceCandidates) {
+      const numericValue = Number(priceCandidate);
+      if (Number.isFinite(numericValue) && numericValue > 0) {
+        return numericValue;
+      }
+    }
+  }
+
+  return 0;
+}
+
 async function resolveBrokerEntryPrice({
   orderId,
   sessionToken,
@@ -162,6 +239,18 @@ async function resolveBrokerEntryPrice({
   baseUrl,
   axiosInstance = require("axios")
 } = {}) {
+  const tradeBookPayload = await fetchBrokerTradeBook({
+    sessionToken,
+    sid,
+    baseUrl,
+    axiosInstance
+  });
+
+  const tradeBookPrice = extractTradeBookEntryPrice(tradeBookPayload, orderId);
+  if (tradeBookPrice > 0) {
+    return tradeBookPrice;
+  }
+
   const orderDetails = await fetchBrokerOrderDetails({
     orderId,
     sessionToken,
@@ -238,6 +327,8 @@ module.exports = {
   resolveFillPrice,
   resolveBrokerEntryPrice,
   fetchBrokerOrderDetails,
+  fetchBrokerTradeBook,
+  extractTradeBookEntryPrice,
   waitForBrokerOrderCompletion,
   isBrokerOrderComplete
 };

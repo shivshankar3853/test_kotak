@@ -168,6 +168,7 @@
             <th>Side</th>
             <th>Qty</th>
             <th>Symbol</th>
+            <th>Entry Price</th>
             <th>PnL</th>
           </tr>
         </thead>
@@ -311,6 +312,7 @@ async function loadTrades(){
         <td>${t.side}</td>
         <td>${t.quantity}</td>
         <td>${t.instrument}</td>
+        <td>${t.entryPrice ?? t.price ?? 0}</td>
         <td class="${cls}">${t.pnl}</td>
       </tr>`;
   });
