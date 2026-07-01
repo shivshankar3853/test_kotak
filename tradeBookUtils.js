@@ -100,15 +100,23 @@ function findTradeBookEntryForTrade(trade = {}, tradeBookEntries = []) {
   const tradeInstrument = normalizeSymbol(trade?.instrument || trade?.symbol || trade?.ts || "");
   const tradeSide = String(trade?.side || trade?.transactionType || trade?.action || "").trim().toUpperCase();
   const tradeQuantity = Number(trade?.quantity || trade?.qty || 0);
+  const tradeTime = trade?.time ? new Date(trade.time) : null;
+  const tradeTimeMs = tradeTime && typeof tradeTime.getTime === "function" && !Number.isNaN(tradeTime.getTime()) ? tradeTime.getTime() : null;
+
+  const exactOrderMatches = [];
+  const symbolMatches = [];
 
   for (const entry of tradeBookEntries) {
-    const entryOrderId = String(entry?.orderId || entry?.raw?.orderId || entry?.raw?.nOrdNo || "").trim();
+    const entryOrderId = String(entry?.orderId || entry?.raw?.orderId || entry?.raw?.nOrdNo || entry?.raw?.ordNo || entry?.raw?.orderNo || entry?.raw?.order_id || "").trim();
     const entryInstrument = normalizeSymbol(entry?.instrument || entry?.raw?.trdSym || entry?.raw?.symbol || "");
     const entrySide = String(entry?.side || entry?.raw?.buySell || entry?.raw?.side || entry?.raw?.transactionType || entry?.raw?.action || "").trim().toUpperCase();
     const entryQuantity = Number(entry?.quantity || entry?.raw?.qty || entry?.raw?.quantity || entry?.raw?.tradeQty || 0);
+    const entryTime = entry?.time ? new Date(entry.time) : entry?.raw?.tradeTime ? new Date(entry.raw.tradeTime) : null;
+    const entryTimeMs = entryTime && typeof entryTime.getTime === "function" && !Number.isNaN(entryTime.getTime()) ? entryTime.getTime() : null;
 
     if (tradeOrderId && entryOrderId && tradeOrderId === entryOrderId) {
-      return entry;
+      exactOrderMatches.push(entry);
+      continue;
     }
 
     if (tradeInstrument && entryInstrument && tradeInstrument === entryInstrument) {
@@ -116,12 +124,31 @@ function findTradeBookEntryForTrade(trade = {}, tradeBookEntries = []) {
       const sameQuantity = !tradeQuantity || !entryQuantity || tradeQuantity === entryQuantity;
 
       if (sameSide && sameQuantity) {
-        return entry;
+        symbolMatches.push({ entry, entryTimeMs });
       }
     }
   }
 
-  return null;
+  if (exactOrderMatches.length > 0) {
+    return exactOrderMatches[0];
+  }
+
+  if (symbolMatches.length === 0) {
+    return null;
+  }
+
+  if (symbolMatches.length === 1) {
+    return symbolMatches[0].entry;
+  }
+
+  symbolMatches.sort((a, b) => {
+    if (tradeTimeMs == null || a.entryTimeMs == null || b.entryTimeMs == null) {
+      return (a.entryTimeMs ?? 0) - (b.entryTimeMs ?? 0);
+    }
+    return Math.abs(a.entryTimeMs - tradeTimeMs) - Math.abs(b.entryTimeMs - tradeTimeMs);
+  });
+
+  return symbolMatches[0].entry;
 }
 
 function toFrontendTrade(trade = {}, tradeBookEntry = null) {

@@ -725,7 +725,23 @@ async function getTradeLog() {
     return trades.map((trade) => {
       const tradeObject = trade.toObject ? trade.toObject() : trade;
       const matchingTradeBookEntry = findTradeBookEntryForTrade(tradeObject, tradeBookEntries);
-      return toFrontendTrade(tradeObject, matchingTradeBookEntry);
+      const frontendTrade = toFrontendTrade(tradeObject, matchingTradeBookEntry);
+
+      if (matchingTradeBookEntry?.entryPrice > 0) {
+        const brokerEntryPrice = Number(matchingTradeBookEntry.entryPrice);
+        const brokerOrderId = matchingTradeBookEntry?.orderId || frontendTrade.orderId || tradeObject.orderId || null;
+        Trade.findByIdAndUpdate(trade._id, {
+          $set: {
+            entryPrice: brokerEntryPrice,
+            price: brokerEntryPrice,
+            orderId: brokerOrderId || tradeObject.orderId || null
+          }
+        }).catch((persistErr) => {
+          console.error("⚠️ Failed to persist broker entry price:", persistErr.message || persistErr);
+        });
+      }
+
+      return frontendTrade;
     });
 
   } catch (err) {
