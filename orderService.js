@@ -94,7 +94,7 @@ function selectLatestBrokerOrderForPlacement({ currentBrokerOrder, targetSymbol,
 }
 
 function shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData, resolvedEntryPrice = 0 }) {
-  if (!brokerOrder || brokerOrder.childOrdersPlaced) {
+  if (!brokerOrder || brokerOrder.childOrdersPlaced || brokerOrder.childOrdersPlacementTriggered) {
     return false;
   }
 
@@ -110,6 +110,40 @@ function shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData, r
   return hasBrokerOrderId && entryPrice > 0;
 }
 
+async function resolvePriceWithTickFirst({
+  symbol,
+  instrument,
+  getTickValue = async (rawSymbol) => (getTickAsync ? getTickAsync(rawSymbol) : 0),
+  getLtpValue = async (rawSymbol, exchange) => getLTP(rawSymbol, exchange)
+}) {
+  const rawSymbol = String(symbol || "").trim();
+  if (!rawSymbol) {
+    return 0;
+  }
+
+  try {
+    const tickValue = await getTickValue(rawSymbol);
+    const tickPrice = Number(tickValue) || 0;
+    if (tickPrice > 0) {
+      return tickPrice;
+    }
+  } catch (tickErr) {
+    console.log("⚠️ Could not fetch WS tick for price resolution:", tickErr?.message || tickErr);
+  }
+
+  try {
+    const ltpValue = await getLtpValue(rawSymbol, instrument?.es);
+    const ltpPrice = Number(ltpValue) || 0;
+    if (ltpPrice > 0) {
+      return ltpPrice;
+    }
+  } catch (ltpErr) {
+    console.log("⚠️ Could not fetch fallback LTP for price resolution:", ltpErr?.message || ltpErr);
+  }
+
+  return 0;
+}
+
 async function resolveBrokerConfirmationPrice({ brokerOrder, orderStreamData, sessionToken, sid, baseUrl }) {
   const entryPrice = Number(orderStreamData?.entryPrice || brokerOrder?.entryPrice || 0);
   if (entryPrice > 0) {
@@ -121,26 +155,15 @@ async function resolveBrokerConfirmationPrice({ brokerOrder, orderStreamData, se
   const instrument = findInstrument(rawSymbol);
 
   if (rawSymbol) {
-    try {
-      const ltpVal = await getLTP(rawSymbol, instrument?.es);
-      const fallbackPrice = Number(ltpVal) || 0;
-      if (fallbackPrice > 0) {
-        return fallbackPrice;
-      }
-    } catch (ltpErr) {
-      console.log("⚠️ Could not fetch fallback LTP for child-order placement:", ltpErr?.message || ltpErr);
-    }
+    const tickFirstPrice = await resolvePriceWithTickFirst({
+      symbol: rawSymbol,
+      instrument,
+      getTickValue: async (rawSymbolValue) => (getTickAsync ? getTickAsync(rawSymbolValue) : 0),
+      getLtpValue: async (rawSymbolValue, exchange) => getLTP(rawSymbolValue, exchange)
+    });
 
-    if (getTickAsync) {
-      try {
-        const tickVal = await getTickAsync(rawSymbol);
-        const fallbackTick = Number(tickVal) || 0;
-        if (fallbackTick > 0) {
-          return fallbackTick;
-        }
-      } catch (tickErr) {
-        console.log("⚠️ Could not fetch fallback tick for child-order placement:", tickErr?.message || tickErr);
-      }
+    if (tickFirstPrice > 0) {
+      return tickFirstPrice;
     }
   }
 
@@ -214,17 +237,18 @@ async function placeGttOcoChildOrdersOnConfirmation({
     });
   }
 
-  if (persistedBrokerOrder?._id && confirmedEntryPrice > 0) {
+  const placementOrderId = persistedBrokerOrder?._id || brokerOrder?._id;
+  if (placementOrderId && confirmedEntryPrice > 0) {
     try {
       persistedBrokerOrder = await BrokerOrder.findByIdAndUpdate(
-        persistedBrokerOrder._id,
+        placementOrderId,
         {
           entryPrice: confirmedEntryPrice,
           brokerOrderId: persistedBrokerOrder.brokerOrderId || orderStreamData?.orderId || null,
           brokerStatus: orderStreamData?.orderStatus || persistedBrokerOrder.brokerStatus,
           status: orderStreamData?.orderStatus === "COMPLETE" ? "COMPLETED" : persistedBrokerOrder.status
         },
-        { new: true }
+        { returnDocument: "after" }
       );
     } catch (persistErr) {
       console.log("⚠️ Could not persist confirmed entry price:", persistErr?.message || persistErr);
@@ -232,8 +256,23 @@ async function placeGttOcoChildOrdersOnConfirmation({
   }
 
   if (!shouldPlaceChildOrdersForConfirmation({ brokerOrder: persistedBrokerOrder, orderStreamData, resolvedEntryPrice: confirmedEntryPrice })) {
-    console.log("⚠️ Skipping child GTT/OCO placement because no usable entry price or broker order id was available yet");
+    console.log("⚠️ Skipping child GTT/OCO placement because a placement request is already in progress or the order is already completed");
     return null;
+  }
+
+  if (placementOrderId) {
+    try {
+      await BrokerOrder.findByIdAndUpdate(
+        placementOrderId,
+        {
+          childOrdersPlacementTriggered: true,
+          childOrdersPlacementTriggeredAt: new Date()
+        },
+        { returnDocument: "after" }
+      );
+    } catch (guardErr) {
+      console.log("⚠️ Could not place child-order placement guard:", guardErr?.message || guardErr);
+    }
   }
 
   if (targetSymbol && persistedBrokerOrder?.symbol && String(persistedBrokerOrder.symbol).trim() !== targetSymbol) {
@@ -285,11 +324,12 @@ async function placeGttOcoChildOrdersOnConfirmation({
     await BrokerOrder.findByIdAndUpdate(persistedBrokerOrder?._id || brokerOrder?._id, {
       childOrdersPlaced: true,
       childOrdersPlacedAt: new Date(),
+      childOrdersPlacementTriggered: false,
       entryPrice: fillPrice > 0 ? fillPrice : undefined,
       brokerOrderId: persistedBrokerOrder?.brokerOrderId || brokerOrder.brokerOrderId || orderStreamData?.orderId || null,
       brokerStatus: orderStreamData?.orderStatus || brokerOrder.brokerStatus,
       status: orderStreamData?.orderStatus === "COMPLETE" ? "COMPLETED" : brokerOrder.status
-    });
+    }, { returnDocument: "after" });
   } catch (err) {
     console.error("❌ Failed to mark child GTT/OCO orders as placed:", err.message || err);
   }
@@ -731,9 +771,19 @@ async function placeOrder(order, signalId = null) {
         const triggerChildOrderPlacement = async () => {
           try {
             const latestBrokerOrder = await BrokerOrder.findById(brokerOrderDoc._id);
+            if (!latestBrokerOrder || latestBrokerOrder.childOrdersPlaced || latestBrokerOrder.childOrdersPlacementTriggered) {
+              return;
+            }
+
             await new Promise((resolve) => setTimeout(resolve, 12000));
+
+            const reloadedBrokerOrder = await BrokerOrder.findById(brokerOrderDoc._id);
+            if (!reloadedBrokerOrder || reloadedBrokerOrder.childOrdersPlaced || reloadedBrokerOrder.childOrdersPlacementTriggered) {
+              return;
+            }
+
             await placeGttOcoChildOrdersOnConfirmation({
-              brokerOrder: latestBrokerOrder,
+              brokerOrder: reloadedBrokerOrder,
               orderStreamData: {
                 orderId: brokerOrderId,
                 orderStatus: initialFillPrice > 0 ? "COMPLETE" : "PENDING",
@@ -769,18 +819,12 @@ async function placeOrder(order, signalId = null) {
     let tradePrice = 0;
 
     try {
-      const ltpVal = await getLTP(symbol, instrument?.es);
-      tradePrice = Number(ltpVal) || 0;
-
-      // fallback to WS/Redis cached tick if API LTP is unavailable
-      if ((!tradePrice || tradePrice === 0) && getTickAsync) {
-        try {
-          const tickVal = await getTickAsync(symbol);
-          tradePrice = Number(tickVal) || tradePrice || 0;
-        } catch (_) {
-          // ignore
-        }
-      }
+      tradePrice = await resolvePriceWithTickFirst({
+        symbol,
+        instrument,
+        getTickValue: async (rawSymbol) => (getTickAsync ? getTickAsync(rawSymbol) : 0),
+        getLtpValue: async (rawSymbol, exchange) => getLTP(rawSymbol, exchange)
+      });
     } catch (e) {
       tradePrice = 0;
     }
@@ -1029,6 +1073,7 @@ module.exports = {
   exitAndReenter,
   shouldPlaceChildOrdersForConfirmation,
   resolveBrokerConfirmationPrice,
+  resolvePriceWithTickFirst,
   placeGttOcoChildOrdersOnConfirmation,
   placeGttOcoChildOrders,
   selectLatestBrokerOrderForPlacement

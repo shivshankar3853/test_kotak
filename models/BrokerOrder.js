@@ -18,6 +18,8 @@ const brokerOrderSchema = new mongoose.Schema(
     entryPrice: Number,
     childOrdersPlaced: { type: Boolean, default: false },
     childOrdersPlacedAt: Date,
+    childOrdersPlacementTriggered: { type: Boolean, default: false },
+    childOrdersPlacementTriggeredAt: Date,
     status: { type: String, default: "PENDING" },
     brokerStatus: String,
     response: { type: mongoose.Schema.Types.Mixed },

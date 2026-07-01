@@ -336,7 +336,7 @@ async function connectWS() {
                 updates.entryPrice = orderStreamData.entryPrice;
               }
 
-              await BrokerOrder.findByIdAndUpdate(brokerOrder._id, updates);
+              await BrokerOrder.findByIdAndUpdate(brokerOrder._id, updates, { returnDocument: "after" });
 
               if (orderStreamData.orderStatus === "COMPLETE" && orderStreamData.entryPrice > 0) {
                 try {

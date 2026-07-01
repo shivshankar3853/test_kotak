@@ -143,7 +143,7 @@ async function fetchPositions(force = false) {
               },
               {
                 upsert: true,
-                new: true,
+                returnDocument: "after",
                 setDefaultsOnInsert: true
               }
             );
