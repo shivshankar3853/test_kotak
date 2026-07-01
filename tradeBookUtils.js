@@ -7,17 +7,20 @@ function normalizeSymbol(value) {
 
 function normalizeTradeBookEntry(entry = {}) {
   const raw = entry && typeof entry === "object" ? entry : {};
-  const instrument = raw.instrument || raw.trdSym || raw.tsym || raw.symbol || raw.sym || raw.scrip || raw.security || raw.tradeSymbol || raw.trading_symbol || "";
+  const instrument = raw.instrument || raw.trdSym || raw.tsym || raw.symbol || raw.sym || raw.scrip || raw.security || raw.tradeSymbol || raw.trading_symbol || raw.ticker || raw.sec || "";
   const side = raw.side || raw.buySell || raw.buy_sell || raw.transactionType || raw.trnType || raw.tt || raw.action || "";
-  const quantity = Number(raw.quantity || raw.qty || raw.qtty || raw.tradeQty || raw.trdQty || raw.lotQty || raw.quantityTraded || 0);
+  const quantity = Number(raw.quantity || raw.qty || raw.qtty || raw.tradeQty || raw.trdQty || raw.lotQty || raw.quantityTraded || raw.filledQty || raw.fldQty || 0);
   const entryPrice = Number(
     raw.entryPrice ||
     raw.avgPrice ||
+    raw.avgPrc ||
     raw.averagePrice ||
     raw.price ||
     raw.tradePrice ||
     raw.fillPrice ||
     raw.avgprice ||
+    raw.avg_prc ||
+    raw.average_price ||
     raw.avg_prc ||
     0
   );
@@ -48,18 +51,48 @@ function extractTradeBookEntries(payload = {}) {
     }
   };
 
-  pushArray(payload);
-  pushArray(payload?.data);
-  pushArray(payload?.data?.data);
-  pushArray(payload?.tradeBook);
-  pushArray(payload?.trades);
-  pushArray(payload?.entries);
-  pushArray(payload?.result);
-  pushArray(payload?.payload);
+  const pushNested = (value) => {
+    if (!value || typeof value !== "object") return;
 
-  return entries
+    if (Array.isArray(value)) {
+      pushArray(value);
+      return;
+    }
+
+    pushArray(value?.tradeBook);
+    pushArray(value?.trades);
+    pushArray(value?.entries);
+    pushArray(value?.result);
+    pushArray(value?.payload);
+    pushArray(value?.data);
+
+    if (value?.data && typeof value.data === "object") {
+      pushArray(value.data?.tradeBook);
+      pushArray(value.data?.trades);
+      pushArray(value.data?.entries);
+      pushArray(value.data?.result);
+      pushArray(value.data?.payload);
+      pushArray(value.data?.data);
+    }
+  };
+
+  pushNested(payload);
+  pushNested(payload?.data);
+  pushNested(payload?.data?.data);
+
+  const normalizedEntries = entries
     .map(normalizeTradeBookEntry)
     .filter((entry) => entry.instrument || entry.orderId || entry.entryPrice > 0);
+
+  const seen = new Set();
+  return normalizedEntries.filter((entry) => {
+    const key = [entry.orderId || "", entry.instrument || "", entry.side || "", entry.entryPrice || ""].join("::");
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function findTradeBookEntryForTrade(trade = {}, tradeBookEntries = []) {
@@ -88,6 +121,8 @@ function toFrontendTrade(trade = {}, tradeBookEntry = null) {
     normalizedTrade.entryPrice ||
     normalizedTrade.price ||
     tradeBookEntry?.entryPrice ||
+    tradeBookEntry?.raw?.avgPrc ||
+    tradeBookEntry?.raw?.avgPrice ||
     0
   );
 
