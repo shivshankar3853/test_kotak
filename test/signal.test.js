@@ -15,6 +15,28 @@ test('signal module exposes consolidated trading functions', () => {
   assert.equal(typeof signal.apiLimiter, 'function');
 });
 
+test('createQuoteRequestThrottler spaces requests apart', async () => {
+  const { createQuoteRequestThrottler } = require('../signal');
+  const throttle = createQuoteRequestThrottler(100);
+  let calls = 0;
+
+  const start = Date.now();
+  await Promise.all([
+    throttle(async () => {
+      calls += 1;
+      return 1;
+    }),
+    throttle(async () => {
+      calls += 1;
+      return 2;
+    })
+  ]);
+  const elapsed = Date.now() - start;
+
+  assert.equal(calls, 2);
+  assert.ok(elapsed >= 90, `expected throttling delay, got ${elapsed}ms`);
+});
+
 test('webhook enables trailing stop only when TSL is present', async () => {
   const engine = signal.createSignalEngine({ port: 0, quoteFetcher: async () => 100 });
   const port = engine.server.address().port;

@@ -20,12 +20,14 @@ const CACHE_MS = 1200;
 let lastCallTime = 0;
 let postTradeLockUntil = 0;
 let lastRateLimitAt = 0;
+let lastQuoteRequestAt = 0;
 
 const MIN_GAP_MS = 1500;
 const POST_TRADE_COOLDOWN = 4000;
 const RATE_LIMIT_COOLDOWN_MS = 5000;
 const TRAIL_GAP = 10;
 const INITIAL_SL = -500;
+const QUOTE_REQUEST_GAP_MS = 1000;
 
 function normalize(symbol) {
   return (symbol || "").toString().trim().toUpperCase();
@@ -52,6 +54,23 @@ function buildQuoteUrl(baseUrl, exchange, symbol, filter = "all") {
 function setPostTradeCooldown() {
   postTradeLockUntil = Date.now() + POST_TRADE_COOLDOWN;
 }
+
+function createQuoteRequestThrottler(gapMs = QUOTE_REQUEST_GAP_MS) {
+  let lastRunAt = 0;
+
+  return async function runWithThrottle(fn) {
+    const now = Date.now();
+    const waitTime = Math.max(0, lastRunAt + gapMs - now);
+    if (waitTime > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    }
+
+    lastRunAt = Date.now();
+    return fn();
+  };
+}
+
+const quoteRequestThrottler = createQuoteRequestThrottler();
 
 async function safeLTPCall(fn) {
   const now = Date.now();
@@ -121,7 +140,8 @@ async function getQuote(symbol, exchangeOverride, filter = "all", retry = 1) {
       return null;
     }
 
-    const res = await safeLTPCall(() => axios.get(url, { headers, timeout: 8000 }));
+    const requestRunner = async () => safeLTPCall(() => axios.get(url, { headers, timeout: 8000 }));
+    const res = await quoteRequestThrottler(requestRunner);
     return res?.data ?? null;
   } catch (err) {
     const status = err.response?.status;
@@ -561,6 +581,7 @@ function startSignalEngine(options = {}) {
 
 module.exports = {
   apiLimiter,
+  createQuoteRequestThrottler,
   getLTP,
   getQuote,
   setPostTradeCooldown,
