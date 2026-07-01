@@ -22,6 +22,7 @@ const {
 const { getTickAsync } = require("./wsService");
 const { resolveFillPrice, resolveBrokerEntryPrice, waitForBrokerOrderCompletion, deriveEntryPriceFromBrokerPosition, findBrokerPositionForSymbol } = require("./fillPriceResolver");
 const { getPositions } = require("./positionService");
+const { normalizeTradeEntryPrice } = require("./tradePriceUtils");
 
 function buildOrderPayload({
   instrument,
@@ -762,9 +763,11 @@ async function getTradeLog() {
     const trades = await Trade.find({ broker: "KOTAK" })
       .sort({ time: -1 });
 
+    const normalizedTrades = trades.map((trade) => normalizeTradeEntryPrice(trade.toObject ? trade.toObject() : trade));
+
     try {
       const brokerPositions = await getPositions();
-      for (const trade of trades) {
+      for (const trade of normalizedTrades) {
         const entryPrice = Number(trade.entryPrice || trade.price || 0);
         if (!entryPrice || entryPrice <= 0) {
           const matchingPosition = findBrokerPositionForSymbol(brokerPositions, trade.instrument);
@@ -783,7 +786,7 @@ async function getTradeLog() {
       console.error("⚠️ Failed to enrich trade entry prices:", positionErr.message || positionErr);
     }
 
-    return trades;
+    return normalizedTrades;
 
   } catch (err) {
     console.error("❌ getTradeLog Error:", err.message);

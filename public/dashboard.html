@@ -306,13 +306,14 @@ async function loadTrades(){
   tradesTable.innerHTML="";
   data.forEach(t=>{
     const cls = t.pnl>=0?"profit":"loss";
+    const entryPrice = Number(t.entryPrice ?? t.price ?? 0);
     tradesTable.innerHTML+=`
       <tr>
         <td>${new Date(t.time).toLocaleTimeString()}</td>
         <td>${t.side}</td>
         <td>${t.quantity}</td>
         <td>${t.instrument}</td>
-        <td>${t.entryPrice ?? t.price ?? 0}</td>
+        <td>${entryPrice > 0 ? entryPrice : 0}</td>
         <td class="${cls}">${t.pnl}</td>
       </tr>`;
   });
