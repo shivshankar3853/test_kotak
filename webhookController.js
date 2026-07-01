@@ -199,17 +199,24 @@ function convertTV(signal) {
 
     // 🔄 Try to decode symbol using symbolDecoder
     let finalSymbol = signal.TS;
-    try {
-      const decoded = decodeSymbol(signal.TS);
-      finalSymbol = decoded.kotakSymbol; // Use Kotak format for API
-      console.log(`✅ Symbol decoded: ${signal.TS} → ${finalSymbol}`);
-    } catch (decodeErr) {
-      // If decoding fails, use original symbol (might be equity or already correct)
-      console.log(`⚠️ Symbol decode failed (might be equity): ${signal.TS}`);
-      // ensure we normalize common noise like hyphens and trailing EQ
+    const exchange = String(signal.E || "").trim().toUpperCase();
+
+    if (exchange === "MCX") {
+      finalSymbol = String(signal.TS || "").trim();
+      console.log(`ℹ️ Skipping symbol decode for MCX futures: ${finalSymbol}`);
+    } else {
       try {
-        finalSymbol = formatSymbol(finalSymbol);
-      } catch (_) {}
+        const decoded = decodeSymbol(signal.TS);
+        finalSymbol = decoded.kotakSymbol; // Use Kotak format for API
+        console.log(`✅ Symbol decoded: ${signal.TS} → ${finalSymbol}`);
+      } catch (decodeErr) {
+        // If decoding fails, use original symbol (might be equity or already correct)
+        console.log(`⚠️ Symbol decode failed (might be equity): ${signal.TS}`);
+        // ensure we normalize common noise like hyphens and trailing EQ
+        try {
+          finalSymbol = formatSymbol(finalSymbol);
+        } catch (_) {}
+      }
     }
 
     const rawTargetPoints = Number(

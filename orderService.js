@@ -33,7 +33,8 @@ function buildOrderPayload({
   amFlag,
   gtt = false,
   oco = false,
-  orderTag = null
+  orderTag = null,
+  triggerPrice = null
 }) {
   const payload = {
     am: amFlag ? "YES" : "NO",
@@ -46,7 +47,7 @@ function buildOrderPayload({
     pt: orderType,
     qt: qtyFinal,
     rt: gtt ? "GTT" : validity || "DAY",
-    tp: "0",
+    tp: orderType === "SL" && triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : "0",
     ts: instrument?.ts,
     tt: action === "BUY" ? "B" : "S"
   };
@@ -133,7 +134,8 @@ function buildChildOrderPayloads({
         amFlag: false,
         gtt: true,
         oco: true,
-        orderTag: "SL"
+        orderTag: "SL",
+        triggerPrice: stopLossPrice
       })
     });
   } else if (hasTP) {
@@ -167,7 +169,8 @@ function buildChildOrderPayloads({
         amFlag: false,
         gtt: true,
         oco: false,
-        orderTag: "SL"
+        orderTag: "SL",
+        triggerPrice: stopLossPrice
       })
     });
   }
@@ -501,8 +504,10 @@ async function placeGttOcoChildOrders({
         validity
       }, null, 2));
 
+      console.log(`📤 Sending ${child.tag} GTT payload to broker`, JSON.stringify(child.jData));
       const response = await postKotakOrder(child.jData, sessionToken, sid, baseUrl);
       const responseBody = response?.data && typeof response.data === "object" ? response.data : {};
+      console.log(`✅ GTT ${child.tag} response`, JSON.stringify(responseBody));
       childResults.push({
         tag: child.tag,
         status: responseBody?.status || responseBody?.stat || responseBody?.order_status || responseBody?.orderStatus || "UNKNOWN",
@@ -510,6 +515,7 @@ async function placeGttOcoChildOrders({
         payload: child.jData
       });
     } catch (err) {
+      console.error(`❌ GTT ${child.tag} error`, err?.response?.status, err?.response?.data || err.message);
       childResults.push({
         tag: child.tag,
         error: err?.response?.data || err.message,
