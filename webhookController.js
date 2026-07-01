@@ -212,6 +212,27 @@ function convertTV(signal) {
       } catch (_) {}
     }
 
+    const rawTargetPoints = Number(
+      signal.TGT ||
+      signal.TP ||
+      signal.tp ||
+      signal.target ||
+      signal.target_point ||
+      signal.target_points ||
+      signal.target_price ||
+      0
+    );
+    const rawStopLossPoints = Number(
+      signal.SLP ||
+      signal.slp ||
+      signal.stop_loss ||
+      signal.stopLoss ||
+      signal.sl ||
+      signal.stop_loss_points ||
+      0
+    );
+    const explicitTargetPrice = Number(signal.target_price || signal.targetPrice || 0);
+
     return {
       TS: finalSymbol,
       quantity: qty,
@@ -221,10 +242,10 @@ function convertTV(signal) {
       order_type: signal.OT || "MARKET",
       transaction_type: signal.TT,
       AMO: signal.AMO || signal.amo || signal.after_market || signal.afterMarket || signal.am || "",
-      TP: Number(signal.TGT || 0),
-      SLP: Number(signal.SLP || 0),
-      targetPrice: Number(signal.TGT || 0),
-      stopLossPoint: Number(signal.SLP || 0),
+      TP: rawTargetPoints,
+      SLP: rawStopLossPoints,
+      targetPrice: explicitTargetPrice > 0 && rawTargetPoints <= 0 ? explicitTargetPrice : 0,
+      stopLossPoint: rawStopLossPoints,
       disclosed_quantity: 0
     };
   } catch (err) {

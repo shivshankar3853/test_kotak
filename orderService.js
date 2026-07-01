@@ -167,7 +167,10 @@ async function resolveBrokerConfirmationPrice({ brokerOrder, orderStreamData, se
       orderId: brokerOrderId
     }, tradeBookEntries);
 
-    return Number(matchingEntry?.entryPrice || matchingEntry?.raw?.avgPrc || matchingEntry?.raw?.avgPrice || 0);
+    const resolvedPrice = Number(matchingEntry?.entryPrice || matchingEntry?.raw?.avgPrc || matchingEntry?.raw?.avgPrice || 0);
+    if (resolvedPrice > 0) {
+      return resolvedPrice;
+    }
   } catch (tradeBookErr) {
     console.log("⚠️ Could not resolve broker confirmation price from trade book:", tradeBookErr?.message || tradeBookErr);
     return 0;
@@ -728,6 +731,7 @@ async function placeOrder(order, signalId = null) {
         const triggerChildOrderPlacement = async () => {
           try {
             const latestBrokerOrder = await BrokerOrder.findById(brokerOrderDoc._id);
+            await new Promise((resolve) => setTimeout(resolve, 12000));
             await placeGttOcoChildOrdersOnConfirmation({
               brokerOrder: latestBrokerOrder,
               orderStreamData: {
@@ -745,7 +749,6 @@ async function placeOrder(order, signalId = null) {
         };
 
         triggerChildOrderPlacement();
-        setTimeout(triggerChildOrderPlacement, 4000);
       }
     }
 
