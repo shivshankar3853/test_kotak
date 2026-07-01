@@ -70,15 +70,54 @@ function calculateChildPrices({ action, fillPrice, targetPoints, stopLossPoints 
   return { targetPrice, stopLossPrice };
 }
 
-function shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData }) {
+function shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData, resolvedEntryPrice = 0 }) {
   if (!brokerOrder || brokerOrder.childOrdersPlaced) {
     return false;
   }
 
+  const entryPrice = Number(resolvedEntryPrice || orderStreamData?.entryPrice || brokerOrder?.entryPrice || 0);
+  const hasBrokerOrderId = Boolean(brokerOrder?.brokerOrderId || orderStreamData?.orderId);
   const orderStatus = String(orderStreamData?.orderStatus || "").trim().toUpperCase();
-  const entryPrice = Number(orderStreamData?.entryPrice || 0);
+  const hasCompletionSignal = orderStatus === "COMPLETE" || (!orderStatus && entryPrice > 0);
 
-  return orderStatus === "COMPLETE" && entryPrice > 0;
+  return hasBrokerOrderId && entryPrice > 0 && hasCompletionSignal;
+}
+
+async function resolveBrokerConfirmationPrice({ brokerOrder, orderStreamData, sessionToken, sid, baseUrl }) {
+  const entryPrice = Number(orderStreamData?.entryPrice || brokerOrder?.entryPrice || 0);
+  if (entryPrice > 0) {
+    return entryPrice;
+  }
+
+  const brokerOrderId = brokerOrder?.brokerOrderId || orderStreamData?.orderId || null;
+  if (!brokerOrderId || !sessionToken || !sid || !baseUrl) {
+    return 0;
+  }
+
+  try {
+    const tradeBookUrl = `${baseUrl}/quick/user/trades`;
+    const tradeBookRes = await axios.get(tradeBookUrl, {
+      headers: {
+        Auth: sessionToken,
+        Sid: sid,
+        "neo-fin-key": "neotradeapi"
+      },
+      timeout: 10000
+    });
+
+    const tradeBookEntries = extractTradeBookEntries(tradeBookRes?.data || {});
+    const matchingEntry = findTradeBookEntryForTrade({
+      instrument: brokerOrder?.symbol,
+      side: brokerOrder?.side,
+      quantity: brokerOrder?.quantity,
+      orderId: brokerOrderId
+    }, tradeBookEntries);
+
+    return Number(matchingEntry?.entryPrice || matchingEntry?.raw?.avgPrc || matchingEntry?.raw?.avgPrice || 0);
+  } catch (tradeBookErr) {
+    console.log("⚠️ Could not resolve broker confirmation price from trade book:", tradeBookErr?.message || tradeBookErr);
+    return 0;
+  }
 }
 
 async function placeGttOcoChildOrdersOnConfirmation({
@@ -88,7 +127,15 @@ async function placeGttOcoChildOrdersOnConfirmation({
   sid,
   baseUrl
 }) {
-  if (!shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData })) {
+  const confirmedEntryPrice = await resolveBrokerConfirmationPrice({
+    brokerOrder,
+    orderStreamData,
+    sessionToken,
+    sid,
+    baseUrl
+  });
+
+  if (!shouldPlaceChildOrdersForConfirmation({ brokerOrder, orderStreamData, resolvedEntryPrice: confirmedEntryPrice })) {
     return null;
   }
 
@@ -112,7 +159,7 @@ async function placeGttOcoChildOrdersOnConfirmation({
 
   const productCode = brokerOrder?.requestPayload?.jData?.pc || "CNC";
   const validity = brokerOrder?.validity || orderPayload?.validity || orderPayload?.VL || "DAY";
-  const fillPrice = Number(orderStreamData?.entryPrice || 0);
+  const fillPrice = Number(confirmedEntryPrice || orderStreamData?.entryPrice || brokerOrder?.entryPrice || 0);
 
   const childOrders = await placeGttOcoChildOrders({
     order: orderPayload,
@@ -558,14 +605,34 @@ async function placeOrder(order, signalId = null) {
     let childOrders = [];
 
     if (brokerOrderDoc?._id) {
+      const brokerOrderId = orderData?.nOrdNo || orderData?.orderId || null;
+
       await BrokerOrder.findByIdAndUpdate(brokerOrderDoc._id, {
-        brokerOrderId: orderData?.nOrdNo || orderData?.orderId || null,
+        brokerOrderId,
         brokerStatus,
         response: orderData,
         status: statusValue === "SUCCESS" ? "PENDING_CONFIRMATION" : statusValue,
         childOrders,
         completedAt: statusValue === "SUCCESS" ? null : new Date()
       });
+
+      if (statusValue === "SUCCESS" && brokerOrderId && sessionToken && sid && baseUrl) {
+        setTimeout(() => {
+          (async () => {
+            try {
+              await placeGttOcoChildOrdersOnConfirmation({
+                brokerOrder: await BrokerOrder.findById(brokerOrderDoc._id),
+                orderStreamData: { orderId: brokerOrderId, orderStatus: "PENDING" },
+                sessionToken,
+                sid,
+                baseUrl
+              });
+            } catch (retryErr) {
+              console.log("⚠️ Deferred child-order retry failed:", retryErr?.message || retryErr);
+            }
+          })();
+        }, 4000);
+      }
     }
 
     // ==============================
@@ -844,6 +911,7 @@ module.exports = {
   getTradeLog,
   exitAndReenter,
   shouldPlaceChildOrdersForConfirmation,
+  resolveBrokerConfirmationPrice,
   placeGttOcoChildOrdersOnConfirmation,
   placeGttOcoChildOrders
 };
