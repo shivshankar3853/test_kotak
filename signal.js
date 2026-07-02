@@ -303,7 +303,7 @@ async function monitorTrades() {
 
     for (const t of openTrades) {
       try {
-        const ltp = await getLTP(t.instrument);
+        const ltp = await (module.exports?.getLTP || getLTP)(t.instrument);
 
         if (!ltp || Number.isNaN(ltp)) continue;
 
@@ -364,7 +364,7 @@ async function monitorTargets() {
         const symbol = trade.instrument || trade.symbol;
         if (!symbol) continue;
 
-        const ltp = await getLTP(symbol);
+        const ltp = await (module.exports?.getLTP || getLTP)(symbol);
         if (!ltp) continue;
 
         if (trade.side === "BUY" && trade.targetPrice && ltp >= trade.targetPrice) {
@@ -408,7 +408,7 @@ async function monitorTrailingSL() {
 
     for (const t of openTrades) {
       try {
-        const ltp = await getLTP(t.instrument);
+        const ltp = await (module.exports?.getLTP || getLTP)(t.instrument);
         if (!ltp || Number.isNaN(ltp) || !t.price || !t.quantity) continue;
 
         let updated = false;

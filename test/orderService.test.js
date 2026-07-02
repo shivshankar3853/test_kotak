@@ -82,3 +82,60 @@ test('shouldPlaceFreshOrderAfterExit skips the standalone follow-up placement wh
   assert.equal(shouldPlaceFreshOrderAfterExit({ currentPosition: { side: 'BUY' }, currentSide: 'BUY', incomingSide: 'SELL' }), false);
   assert.equal(shouldPlaceFreshOrderAfterExit({ currentPosition: { side: 'BUY' }, currentSide: 'BUY', incomingSide: 'BUY' }), true);
 });
+
+test('exitAndReenter closes the existing opposite position and places a fresh order', async () => {
+  const orderService = require('../orderService');
+  const Trade = require('../models/Trade');
+
+  const originalPlaceOrder = orderService.placeOrder;
+
+  let callCount = 0;
+  orderService.placeOrder = async (order, signalId) => {
+    callCount += 1;
+    return { nOrdNo: callCount === 2 ? 'new-ord' : 'exit-ord' };
+  };
+
+  try {
+    const currentPosition = { side: 'SELL', quantity: 2 };
+    const newOrder = { TS: 'TEST', quantity: 2, transaction_type: 'BUY', product: 'NRML' };
+
+    const result = await orderService.exitAndReenter(currentPosition, newOrder, 'signal-id');
+
+    assert.equal(callCount, 2);
+    assert.equal(result.exitRes.nOrdNo, 'exit-ord');
+    assert.equal(result.newRes.nOrdNo, 'new-ord');
+  } finally {
+    orderService.placeOrder = originalPlaceOrder;
+  }
+});
+
+test('exitAndReenter closes the existing opposite position and places a fresh order', async () => {
+  const orderService = require('../orderService');
+  const BrokerOrder = require('../models/BrokerOrder');
+
+  const originalUpdateMany = BrokerOrder.updateMany;
+  const originalPlaceOrder = orderService.placeOrder;
+
+  const placeOrderCalls = [];
+  BrokerOrder.updateMany = async () => ({ modifiedCount: 1 });
+  orderService.placeOrder = async (order, signalId) => {
+    placeOrderCalls.push(order);
+    return { nOrdNo: placeOrderCalls.length === 2 ? 'new-ord' : 'exit-ord' };
+  };
+
+  try {
+    const currentPosition = { side: 'SELL', quantity: 2 };
+    const newOrder = { TS: 'TEST', quantity: 2, transaction_type: 'BUY', product: 'NRML' };
+
+    const result = await orderService.exitAndReenter(currentPosition, newOrder, 'signal-id');
+
+    assert.equal(placeOrderCalls.length, 2);
+    assert.equal(placeOrderCalls[0].transaction_type, 'BUY');
+    assert.equal(placeOrderCalls[1].transaction_type, 'BUY');
+    assert.equal(result.exitRes.nOrdNo, 'exit-ord');
+    assert.equal(result.newRes.nOrdNo, 'new-ord');
+  } finally {
+    BrokerOrder.updateMany = originalUpdateMany;
+    orderService.placeOrder = originalPlaceOrder;
+  }
+});

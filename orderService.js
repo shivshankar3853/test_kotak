@@ -205,6 +205,49 @@ function normalizeOrderSide(side) {
   return normalized;
 }
 
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function cancelPendingChildOrderPlacements({ symbol, reason = "REPLACED_BY_NEW_SIGNAL" }) {
+  const normalizedSymbol = String(symbol || "").trim();
+  if (!normalizedSymbol) {
+    return { modifiedCount: 0 };
+  }
+
+  try {
+    const symbolMatcher = { $regex: new RegExp(`^${escapeRegExp(normalizedSymbol)}$`, "i") };
+    const result = await BrokerOrder.updateMany(
+      {
+        $or: [
+          { symbol: symbolMatcher },
+          { "requestPayload.order.TS": symbolMatcher },
+          { "requestPayload.order.ts": symbolMatcher },
+          { "requestPayload.order.symbol": symbolMatcher }
+        ],
+        status: { $in: ["PENDING", "PENDING_CONFIRMATION", "SUCCESS", "COMPLETED", "OPEN"] }
+      },
+      {
+        $set: {
+          status: "CANCELLED",
+          brokerStatus: "CANCELLED",
+          childOrders: [],
+          childOrdersPlaced: false,
+          childOrdersPlacedAt: new Date(),
+          childOrdersPlacementTriggered: true,
+          childOrdersPlacementTriggeredAt: new Date(),
+          error: reason
+        }
+      }
+    );
+
+    return result;
+  } catch (err) {
+    console.log("⚠️ Could not cancel prior child-order placements:", err?.message || err);
+    return { modifiedCount: 0 };
+  }
+}
+
 function shouldPlaceFreshOrderAfterExit({ currentPosition, currentSide, incomingSide }) {
   if (!currentPosition) {
     return true;
@@ -220,35 +263,6 @@ function shouldPlaceFreshOrderAfterExit({ currentPosition, currentSide, incoming
   }
 
   return normalizedCurrentSide === normalizedIncomingSide;
-}
-
-async function cancelPendingChildOrderPlacements({ symbol, reason = "REPLACED_BY_NEW_SIGNAL" }) {
-  if (!symbol) {
-    return { modifiedCount: 0 };
-  }
-
-  try {
-    const result = await BrokerOrder.updateMany(
-      {
-        symbol: String(symbol).trim(),
-        status: { $in: ["PENDING", "PENDING_CONFIRMATION", "SUCCESS", "COMPLETED", "OPEN"] }
-      },
-      {
-        $set: {
-          status: "CANCELLED",
-          brokerStatus: "CANCELLED",
-          childOrdersPlacementTriggered: true,
-          childOrdersPlacementTriggeredAt: new Date(),
-          error: reason
-        }
-      }
-    );
-
-    return result;
-  } catch (err) {
-    console.log("⚠️ Could not cancel prior child-order placements:", err?.message || err);
-    return { modifiedCount: 0 };
-  }
 }
 
 function selectLatestBrokerOrderForPlacement({ currentBrokerOrder, targetSymbol, latestBrokerOrder }) {
@@ -1167,7 +1181,6 @@ async function exitAndReenter(currentPosition, newOrder, signalId = null) {
       reason: "REPLACED_BY_REENTRY"
     });
 
-    // Place market exit order for the existing position
     const exitOrder = {
       TS: symbol,
       quantity: exitQty,
@@ -1179,14 +1192,26 @@ async function exitAndReenter(currentPosition, newOrder, signalId = null) {
 
     console.log(`🔁 exitAndReenter: exiting ${exitSide} ${exitQty} for ${exitOrder.TS}`);
 
-    const exitRes = await placeOrder(exitOrder, signalId);
+    const placeOrderFn = (module.exports?.placeOrder && module.exports.placeOrder !== placeOrder)
+      ? module.exports.placeOrder
+      : placeOrder;
 
-    // Small delay to let broker/process update positions
-    await new Promise((r) => setTimeout(r, 1500));
+    const exitRes = await placeOrderFn(exitOrder, signalId);
+
+    await new Promise((r) => setTimeout(r, 3000));
 
     console.log(`🔁 exitAndReenter: placing new order ${newOrder.transaction_type} ${newOrder.quantity} for ${newOrder.TS}`);
 
-    const newRes = await placeOrder(newOrder, signalId);
+    const newRes = await placeOrderFn(newOrder, signalId);
+
+    if (!newRes || !newRes?.nOrdNo) {
+      console.log("⚠️ Reentry order did not return a new broker order ID; retrying once.");
+      await new Promise((r) => setTimeout(r, 2000));
+      return {
+        exitRes,
+        newRes: await placeOrder(newOrder, signalId)
+      };
+    }
 
     return { exitRes, newRes };
   } catch (err) {

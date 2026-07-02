@@ -478,6 +478,8 @@ async function handleWebhook(req, res) {
         }
 
         let handledReentry = false;
+        let reentryResult = null;
+
         if (currentPosition && currentSide && currentSide !== incomingSide) {
           const oppositeQty = Number(
             currentPosition.quantity ||
@@ -493,9 +495,9 @@ async function handleWebhook(req, res) {
           await appendDecision(signalDoc._id, `Detected opposite-side ${currentSide} position (${oppositeQty}). Will exit then open ${incomingSide}.`, "EXIT_AND_REENTER");
 
           try {
-            const result = await exitAndReenter(currentPosition, order, signalDoc._id);
-            await appendDecision(signalDoc._id, `Exit result: ${JSON.stringify(result?.exitRes || result)}`);
-            await appendDecision(signalDoc._id, `Open result: ${JSON.stringify(result?.newRes || result)}`, "OPENED");
+            reentryResult = await exitAndReenter(currentPosition, order, signalDoc._id);
+            await appendDecision(signalDoc._id, `Exit result: ${JSON.stringify(reentryResult?.exitRes || reentryResult)}`);
+            await appendDecision(signalDoc._id, `Open result: ${JSON.stringify(reentryResult?.newRes || reentryResult)}`, "OPENED");
             handledReentry = true;
           } catch (e) {
             await appendDecision(signalDoc._id, `Exit+Reenter failed: ${e.message || e}`, "ERROR");
@@ -503,7 +505,27 @@ async function handleWebhook(req, res) {
           }
         }
 
-        if (handledReentry || !shouldPlaceFreshOrderAfterExit({ currentPosition, currentSide, incomingSide })) {
+        if (handledReentry) {
+          if (!reentryResult?.newRes || !reentryResult?.newRes?.nOrdNo) {
+            console.log("⚠️ Reentry attempt did not return a filled fresh order; placing fallback fresh order.");
+            const fallbackResult = await placeOrder(order, signalDoc._id);
+            await Signal.findByIdAndUpdate(signalDoc._id, {
+              processed: true,
+              orderId: fallbackResult?.nOrdNo || fallbackResult?.orderId || null,
+              error: null
+            });
+          } else {
+            await Signal.findByIdAndUpdate(signalDoc._id, {
+              processed: true,
+              orderId: reentryResult?.newRes?.nOrdNo || reentryResult?.newRes?.orderId || null,
+              error: null
+            });
+          }
+          processedAny = true;
+          continue;
+        }
+
+        if (!shouldPlaceFreshOrderAfterExit({ currentPosition, currentSide, incomingSide })) {
           await Signal.findByIdAndUpdate(signalDoc._id, {
             processed: true,
             orderId: null,
