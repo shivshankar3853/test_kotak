@@ -16,18 +16,18 @@ const { getTickAsync, subscribeSymbols } = require("./wsService");
 const Trade = require("./models/Trade");
 
 const ltpCache = new Map();
-const CACHE_MS = 1200;
+const CACHE_MS = 5000;
 let lastCallTime = 0;
 let postTradeLockUntil = 0;
 let lastRateLimitAt = 0;
 let lastQuoteRequestAt = 0;
 
-const MIN_GAP_MS = 1500;
+const MIN_GAP_MS = 2500;
 const POST_TRADE_COOLDOWN = 4000;
-const RATE_LIMIT_COOLDOWN_MS = 5000;
+const RATE_LIMIT_COOLDOWN_MS = 60000;
 const TRAIL_GAP = 10;
 const INITIAL_SL = -500;
-const QUOTE_REQUEST_GAP_MS = 1000;
+const QUOTE_REQUEST_GAP_MS = 5000;
 
 function normalize(symbol) {
   return (symbol || "").toString().trim().toUpperCase();
@@ -160,6 +160,8 @@ async function getQuote(symbol, exchangeOverride, filter = "all", retry = 1) {
     }
 
     if (retry > 0) {
+      const backoff = Math.min(5000, 1000 * (4 - retry));
+      await new Promise((resolve) => setTimeout(resolve, backoff));
       return getQuote(symbol, exchangeOverride, filter, retry - 1);
     }
 
@@ -293,6 +295,10 @@ async function placeOrder(order, signalId = null) {
 
 async function monitorTrades() {
   try {
+    if (Date.now() - lastRateLimitAt < RATE_LIMIT_COOLDOWN_MS) {
+      return;
+    }
+
     if (mongoose.connection.readyState !== 1) {
       return;
     }
@@ -357,6 +363,10 @@ async function squareOffAll() {
 
 async function monitorTargets() {
   try {
+    if (Date.now() - lastRateLimitAt < RATE_LIMIT_COOLDOWN_MS) {
+      return;
+    }
+
     const trades = await Trade.find({ status: "OPEN" });
 
     for (const trade of trades) {
@@ -401,6 +411,10 @@ async function monitorTargets() {
 
 async function monitorTrailingSL() {
   try {
+    if (Date.now() - lastRateLimitAt < RATE_LIMIT_COOLDOWN_MS) {
+      return;
+    }
+
     if (mongoose.connection.readyState !== 1) return;
 
     const openTrades = await Trade.find({ status: "OPEN", useTrailingSL: true });

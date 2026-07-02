@@ -466,7 +466,7 @@ function startIntervals() {
     } catch (e) {
       logger.error(`Trailing SL error: ${e.message}`);
     }
-  }, 10000);
+  }, 15000);
 
   setInterval(async () => {
     try {
@@ -475,7 +475,7 @@ function startIntervals() {
     } catch (e) {
       logger.error(`Target engine error: ${e.message}`);
     }
-  }, 3000);
+  }, 10000);
 
   setInterval(async () => {
     try {
@@ -484,7 +484,7 @@ function startIntervals() {
     } catch (e) {
       logger.error(`Risk manager error: ${e.message}`);
     }
-  }, 5000);
+  }, 10000);
 
   setInterval(async () => {
     try {
