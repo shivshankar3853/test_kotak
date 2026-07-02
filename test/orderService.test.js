@@ -33,7 +33,7 @@ test('resolvePriceWithTickFirst prefers the websocket tick before falling back t
   assert.equal(price, 105);
 });
 
-test('buildChildOrderPayloads creates validated TP and SL limit payloads after execution', () => {
+test('buildChildOrderPayloads creates validated TP and SL payloads after execution', () => {
   const payloads = buildChildOrderPayloads({
     instrument: { es: 'nse_fo', ts: 'TEST' },
     action: 'BUY',
@@ -53,14 +53,12 @@ test('buildChildOrderPayloads creates validated TP and SL limit payloads after e
   assert.equal(payloads[0].jData.rt, 'DAY');
   assert.equal(payloads[1].tag, 'SL');
   assert.equal(payloads[1].jData.pr, '95');
-  assert.equal(payloads[1].jData.pt, 'L');
-  assert.equal(payloads[1].jData.tp, '0');
-  assert.equal(payloads[1].jData.gtt, undefined);
-  assert.equal(payloads[1].jData.oco, undefined);
+  assert.equal(payloads[1].jData.pt, 'SL');
+  assert.equal(payloads[1].jData.tp, '95');
   assert.equal(payloads[1].jData.rt, 'DAY');
 });
 
-test('buildChildOrderPayloads uses the requested child-order type codes', () => {
+test('buildChildOrderPayloads hardcodes TP as limit and SL as stop-loss', () => {
   const payloads = buildChildOrderPayloads({
     instrument: { es: 'nse_fo', ts: 'TEST' },
     action: 'BUY',
@@ -69,11 +67,11 @@ test('buildChildOrderPayloads uses the requested child-order type codes', () => 
     validity: 'DAY',
     fillPrice: 100,
     targetPoints: 10,
-    stopLossPoints: 5,
-    childOrderType: 'SL-M'
+    stopLossPoints: 5
   });
 
   assert.equal(payloads.length, 2);
-  assert.equal(payloads[0].jData.pt, 'SL-M');
-  assert.equal(payloads[1].jData.pt, 'SL-M');
+  assert.equal(payloads[0].jData.pt, 'L');
+  assert.equal(payloads[1].jData.pt, 'SL');
+  assert.equal(payloads[1].jData.tp, '95');
 });

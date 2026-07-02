@@ -282,6 +282,11 @@ async function calculatePnL(positionsInput = null) {
 }
 
 async function placeOrder(order, signalId = null) {
+  const override = module.exports?.placeOrder;
+  if (typeof override === "function" && override !== placeOrder) {
+    return override(order, signalId);
+  }
+
   const { placeOrder: placeBrokerOrder } = require("./orderService");
   return placeBrokerOrder(order, signalId);
 }
@@ -362,7 +367,7 @@ async function monitorTargets() {
         if (!ltp) continue;
 
         if (trade.side === "BUY" && trade.targetPrice && ltp >= trade.targetPrice) {
-          const orderRes = await placeOrder({ TS: symbol, quantity: trade.quantity, transaction_type: "SELL", order_type: "MARKET", product: "NRML" });
+          const orderRes = await placeOrder({ TS: symbol, quantity: trade.quantity, transaction_type: "SELL", order_type: "LIMIT", price: trade.targetPrice, product: "NRML" });
           if (!orderRes) continue;
 
           trade.status = "CLOSED";
@@ -374,7 +379,7 @@ async function monitorTargets() {
         }
 
         if (trade.side === "SELL" && trade.targetPrice && ltp <= trade.targetPrice) {
-          const orderRes = await placeOrder({ TS: symbol, quantity: trade.quantity, transaction_type: "BUY", order_type: "MARKET", product: "NRML" });
+          const orderRes = await placeOrder({ TS: symbol, quantity: trade.quantity, transaction_type: "BUY", order_type: "LIMIT", price: trade.targetPrice, product: "NRML" });
           if (!orderRes) continue;
 
           trade.status = "CLOSED";

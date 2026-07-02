@@ -96,8 +96,7 @@ function buildChildOrderPayloads({
   validity,
   fillPrice,
   targetPoints,
-  stopLossPoints,
-  childOrderType = "L"
+  stopLossPoints
 }) {
   const hasTP = Number.isFinite(targetPoints) && targetPoints > 0;
   const hasSL = Number.isFinite(stopLossPoints) && stopLossPoints > 0;
@@ -117,7 +116,6 @@ function buildChildOrderPayloads({
     stopLossPoints
   });
 
-  const normalizedChildOrderType = normalizeOrderTypeCode(childOrderType);
   const isBuy = action === "BUY";
   const oppositeAction = isBuy ? "SELL" : "BUY";
   const childOrders = [];
@@ -131,8 +129,8 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-        orderType: normalizedChildOrderType,
-        ptValue: normalizedChildOrderType,
+        orderType: "L",
+        ptValue: "L",
         price: targetPrice,
         amFlag: false,
         orderTag: "TP"
@@ -147,9 +145,10 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-        orderType: normalizedChildOrderType,
-        ptValue: normalizedChildOrderType,
+        orderType: "SL",
+        ptValue: "SL",
         price: stopLossPrice,
+        triggerPrice: stopLossPrice,
         amFlag: false,
         orderTag: "SL"
       })
@@ -163,8 +162,8 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-        orderType: normalizedChildOrderType,
-        ptValue: normalizedChildOrderType,
+        orderType: "L",
+        ptValue: "L",
         price: targetPrice,
         amFlag: false,
         orderTag: "TP"
@@ -179,9 +178,10 @@ function buildChildOrderPayloads({
         qtyFinal,
         productCode,
         validity,
-        orderType: normalizedChildOrderType,
-        ptValue: normalizedChildOrderType,
+        orderType: "SL",
+        ptValue: "SL",
         price: stopLossPrice,
+        triggerPrice: stopLossPrice,
         amFlag: false,
         orderTag: "SL"
       })
@@ -488,7 +488,6 @@ async function placeGttOcoChildOrders({
   baseUrl,
   brokerOrderId
 }) {
-  const rawChildOrderType = order?.order_type || order?.OT || order?.orderType || order?.type || "L";
   const childOrders = buildChildOrderPayloads({
     instrument,
     action,
@@ -497,8 +496,7 @@ async function placeGttOcoChildOrders({
     validity,
     fillPrice,
     targetPoints,
-    stopLossPoints,
-    childOrderType: rawChildOrderType
+    stopLossPoints
   });
 
   if (!childOrders.length) {

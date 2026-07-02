@@ -37,6 +37,44 @@ test('createQuoteRequestThrottler spaces requests apart', async () => {
   assert.ok(elapsed >= 90, `expected throttling delay, got ${elapsed}ms`);
 });
 
+test('monitorTargets uses limit exits when target price is hit', async () => {
+  const originalGetLTP = signal.getLTP;
+  const originalTradeFind = require('../models/Trade').find;
+  const originalPlaceOrder = signal.placeOrder;
+  const calls = [];
+
+  const Trade = require('../models/Trade');
+  Trade.find = async () => [{
+    _id: 'trade-1',
+    instrument: 'TEST',
+    quantity: 1,
+    side: 'BUY',
+    targetPrice: 110,
+    entryPrice: 100,
+    status: 'OPEN',
+    save: async function () { this.saved = true; return this; }
+  }];
+
+  signal.getLTP = async () => 110;
+  signal.placeOrder = async (order) => {
+    calls.push(order);
+    return { status: 'PLACED' };
+  };
+
+  try {
+    await signal.monitorTargets();
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].order_type, 'LIMIT');
+    assert.equal(calls[0].price, 110);
+    assert.equal(calls[0].transaction_type, 'SELL');
+  } finally {
+    signal.getLTP = originalGetLTP;
+    Trade.find = originalTradeFind;
+    signal.placeOrder = originalPlaceOrder;
+  }
+});
+
 test('webhook enables trailing stop only when TSL is present', async () => {
   const engine = signal.createSignalEngine({ port: 0, quoteFetcher: async () => 100 });
   const port = engine.server.address().port;
