@@ -336,7 +336,8 @@ async function squareOffAll() {
         if (!freshTrade) continue;
 
         const exitSide = t.side === "BUY" ? "SELL" : "BUY";
-        const orderRes = await placeOrder({ TS: t.instrument, quantity: t.quantity, transaction_type: exitSide, order_type: "MARKET", product: "NRML" });
+        const exitPrice = Number(t.targetPrice || t.price || 0);
+        const orderRes = await placeOrder({ TS: t.instrument, quantity: t.quantity, transaction_type: exitSide, order_type: exitPrice > 0 ? "LIMIT" : "MARKET", price: exitPrice > 0 ? exitPrice : undefined, product: "NRML" });
 
         if (orderRes && orderRes.status === "REJECTED") {
           continue;
@@ -454,7 +455,8 @@ async function monitorTrailingSL() {
         }
 
         const exitSide = t.side === "BUY" ? "SELL" : "BUY";
-        await placeOrder({ TS: t.instrument, quantity: t.quantity, transaction_type: exitSide, order_type: "MARKET", product: "NRML" });
+        const exitPrice = Number(t.trailingSL || t.price || 0);
+        await placeOrder({ TS: t.instrument, quantity: t.quantity, transaction_type: exitSide, order_type: exitPrice > 0 ? "LIMIT" : "MARKET", price: exitPrice > 0 ? exitPrice : undefined, product: "NRML" });
 
         t.status = "CLOSED";
         t.exitPrice = ltp;
