@@ -1,4 +1,4 @@
-const { placeOrder, exitAndReenter } = require("./orderService");
+const { placeOrder, exitAndReenter, shouldPlaceFreshOrderAfterExit } = require("./orderService");
 const { isTradingEnabled, canTrade, isDuplicate } = require("./control");
 const { validateSignal } = require("./validator");
 const { decodeSymbol } = require("./symbolDecoder");
@@ -477,6 +477,7 @@ async function handleWebhook(req, res) {
           continue;
         }
 
+        let handledReentry = false;
         if (currentPosition && currentSide && currentSide !== incomingSide) {
           const oppositeQty = Number(
             currentPosition.quantity ||
@@ -495,10 +496,21 @@ async function handleWebhook(req, res) {
             const result = await exitAndReenter(currentPosition, order, signalDoc._id);
             await appendDecision(signalDoc._id, `Exit result: ${JSON.stringify(result?.exitRes || result)}`);
             await appendDecision(signalDoc._id, `Open result: ${JSON.stringify(result?.newRes || result)}`, "OPENED");
+            handledReentry = true;
           } catch (e) {
             await appendDecision(signalDoc._id, `Exit+Reenter failed: ${e.message || e}`, "ERROR");
             throw e;
           }
+        }
+
+        if (handledReentry || !shouldPlaceFreshOrderAfterExit({ currentPosition, currentSide, incomingSide })) {
+          await Signal.findByIdAndUpdate(signalDoc._id, {
+            processed: true,
+            orderId: null,
+            error: null
+          });
+          processedAny = true;
+          continue;
         }
 
         console.log("📤 Final Order:", order);

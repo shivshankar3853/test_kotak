@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { shouldPlaceChildOrdersForConfirmation, selectLatestBrokerOrderForPlacement, resolvePriceWithTickFirst, buildChildOrderPayloads } = require('../orderService');
+const { shouldPlaceChildOrdersForConfirmation, selectLatestBrokerOrderForPlacement, resolvePriceWithTickFirst, buildChildOrderPayloads, shouldPlaceFreshOrderAfterExit } = require('../orderService');
 
 test('shouldPlaceChildOrdersForConfirmation waits for completed broker confirmation before placing child orders', () => {
   const brokerOrder = { childOrdersPlaced: false, brokerOrderId: '260701000630614' };
@@ -74,4 +74,11 @@ test('buildChildOrderPayloads hardcodes TP as limit and SL as stop-loss', () => 
   assert.equal(payloads[0].jData.pt, 'L');
   assert.equal(payloads[1].jData.pt, 'SL');
   assert.equal(payloads[1].jData.tp, '95');
+});
+
+test('shouldPlaceFreshOrderAfterExit skips the standalone follow-up placement when reentry is already handled', () => {
+  assert.equal(shouldPlaceFreshOrderAfterExit({ currentPosition: null, currentSide: null, incomingSide: 'BUY' }), true);
+  assert.equal(shouldPlaceFreshOrderAfterExit({ currentPosition: { side: 'SELL' }, currentSide: 'SELL', incomingSide: 'BUY' }), false);
+  assert.equal(shouldPlaceFreshOrderAfterExit({ currentPosition: { side: 'BUY' }, currentSide: 'BUY', incomingSide: 'SELL' }), false);
+  assert.equal(shouldPlaceFreshOrderAfterExit({ currentPosition: { side: 'BUY' }, currentSide: 'BUY', incomingSide: 'BUY' }), true);
 });

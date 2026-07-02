@@ -191,6 +191,66 @@ function buildChildOrderPayloads({
   return childOrders;
 }
 
+function normalizeOrderSide(side) {
+  const normalized = String(side || "").trim().toUpperCase();
+
+  if (normalized === "B" || normalized === "BUY") {
+    return "BUY";
+  }
+
+  if (normalized === "S" || normalized === "SELL") {
+    return "SELL";
+  }
+
+  return normalized;
+}
+
+function shouldPlaceFreshOrderAfterExit({ currentPosition, currentSide, incomingSide }) {
+  if (!currentPosition) {
+    return true;
+  }
+
+  const normalizedCurrentSide = normalizeOrderSide(
+    currentSide || currentPosition?.side || currentPosition?.transaction_type || currentPosition?.tt || currentPosition?.action || ""
+  );
+  const normalizedIncomingSide = normalizeOrderSide(incomingSide);
+
+  if (!normalizedCurrentSide || !normalizedIncomingSide) {
+    return true;
+  }
+
+  return normalizedCurrentSide === normalizedIncomingSide;
+}
+
+async function cancelPendingChildOrderPlacements({ symbol, reason = "REPLACED_BY_NEW_SIGNAL" }) {
+  if (!symbol) {
+    return { modifiedCount: 0 };
+  }
+
+  try {
+    const result = await BrokerOrder.updateMany(
+      {
+        symbol: String(symbol).trim(),
+        status: { $in: ["PENDING", "PENDING_CONFIRMATION", "SUCCESS", "COMPLETED", "OPEN"] }
+      },
+      {
+        $set: {
+          status: "CANCELLED",
+          brokerStatus: "CANCELLED",
+          childOrdersPlacementTriggered: true,
+          childOrdersPlacementTriggeredAt: new Date(),
+          error: reason
+        }
+      }
+    );
+
+    return result;
+  } catch (err) {
+    console.log("⚠️ Could not cancel prior child-order placements:", err?.message || err);
+    return { modifiedCount: 0 };
+  }
+}
+
 function selectLatestBrokerOrderForPlacement({ currentBrokerOrder, targetSymbol, latestBrokerOrder }) {
   if (!targetSymbol) {
     return currentBrokerOrder || latestBrokerOrder || null;
@@ -1100,10 +1160,16 @@ async function exitAndReenter(currentPosition, newOrder, signalId = null) {
     const curSide = String(currentPosition.side || currentPosition.transaction_type || "").trim().toUpperCase();
     const exitSide = curSide === "BUY" ? "SELL" : "BUY";
     const exitQty = Number(currentPosition.quantity || currentPosition.qty || currentPosition.Q || newOrder.quantity) || newOrder.quantity;
+    const symbol = newOrder.TS || newOrder.ts || newOrder.symbol;
+
+    await cancelPendingChildOrderPlacements({
+      symbol,
+      reason: "REPLACED_BY_REENTRY"
+    });
 
     // Place market exit order for the existing position
     const exitOrder = {
-      TS: newOrder.TS || newOrder.ts || newOrder.symbol,
+      TS: symbol,
       quantity: exitQty,
       transaction_type: exitSide,
       order_type: "MARKET",
@@ -1139,5 +1205,6 @@ module.exports = {
   buildChildOrderPayloads,
   placeGttOcoChildOrdersOnConfirmation,
   placeGttOcoChildOrders,
-  selectLatestBrokerOrderForPlacement
+  selectLatestBrokerOrderForPlacement,
+  shouldPlaceFreshOrderAfterExit
 };
