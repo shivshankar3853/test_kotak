@@ -55,8 +55,6 @@ function buildOrderPayload({
   orderType,
   price,
   amFlag,
-  gtt = false,
-  oco = false,
   orderTag = null,
   triggerPrice = null,
   ptValue = undefined
@@ -69,7 +67,7 @@ function buildOrderPayload({
     pc: productCode,
     pf: "N",
     pr: String(price || "0"),
-      pt: ptValue !== undefined ? ptValue : (gtt && triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : orderType),
+    pt: ptValue !== undefined ? ptValue : orderType,
     qt: qtyFinal,
     rt: validity || "DAY",
     tp: triggerPrice !== null && triggerPrice !== undefined ? String(triggerPrice) : "0",
@@ -77,12 +75,6 @@ function buildOrderPayload({
     tt: action === "BUY" ? "B" : "S"
   };
 
-  if (gtt) {
-    payload.gtt = "Y";
-  }
-  if (oco) {
-    payload.oco = "Y";
-  }
   if (orderTag) {
     payload.tag = orderTag;
   }
@@ -105,7 +97,7 @@ function buildChildOrderPayloads({
   fillPrice,
   targetPoints,
   stopLossPoints,
-  childOrderType = "MKT"
+  childOrderType = "L"
 }) {
   const hasTP = Number.isFinite(targetPoints) && targetPoints > 0;
   const hasSL = Number.isFinite(stopLossPoints) && stopLossPoints > 0;
@@ -115,7 +107,7 @@ function buildChildOrderPayloads({
   }
 
   if (!fillPrice || isNaN(fillPrice) || fillPrice <= 0) {
-    throw new Error("fillPrice is required before building child GTT/OCO payloads");
+    throw new Error("fillPrice is required before building child limit payloads");
   }
 
   const { targetPrice, stopLossPrice } = calculateChildPrices({
@@ -143,10 +135,7 @@ function buildChildOrderPayloads({
         ptValue: normalizedChildOrderType,
         price: targetPrice,
         amFlag: false,
-        gtt: true,
-        oco: true,
-        orderTag: "TP",
-        triggerPrice: targetPrice
+        orderTag: "TP"
       })
     });
 
@@ -162,10 +151,7 @@ function buildChildOrderPayloads({
         ptValue: normalizedChildOrderType,
         price: stopLossPrice,
         amFlag: false,
-        gtt: true,
-        oco: true,
-        orderTag: "SL",
-        triggerPrice: stopLossPrice
+        orderTag: "SL"
       })
     });
   } else if (hasTP) {
@@ -181,10 +167,7 @@ function buildChildOrderPayloads({
         ptValue: normalizedChildOrderType,
         price: targetPrice,
         amFlag: false,
-        gtt: true,
-        oco: false,
-        orderTag: "TP",
-        triggerPrice: targetPrice
+        orderTag: "TP"
       })
     });
   } else if (hasSL) {
@@ -200,10 +183,7 @@ function buildChildOrderPayloads({
         ptValue: normalizedChildOrderType,
         price: stopLossPrice,
         amFlag: false,
-        gtt: true,
-        oco: false,
-        orderTag: "SL",
-        triggerPrice: stopLossPrice
+        orderTag: "SL"
       })
     });
   }
@@ -397,7 +377,7 @@ async function placeGttOcoChildOrdersOnConfirmation({
   }
 
   if (!shouldPlaceChildOrdersForConfirmation({ brokerOrder: persistedBrokerOrder, orderStreamData, resolvedEntryPrice: confirmedEntryPrice })) {
-    console.log("⚠️ Skipping child GTT/OCO placement because a placement request is already in progress or the order is already completed");
+    console.log("⚠️ Skipping child limit-order placement because a placement request is already in progress or the order is already completed");
     return null;
   }
 
@@ -442,7 +422,7 @@ async function placeGttOcoChildOrdersOnConfirmation({
   const validity = persistedBrokerOrder?.validity || brokerOrder?.validity || orderPayload?.validity || orderPayload?.VL || "DAY";
   const fillPrice = Number(confirmedEntryPrice || orderStreamData?.entryPrice || persistedBrokerOrder?.entryPrice || brokerOrder?.entryPrice || 0);
 
-  console.log(`🧩 Placing child GTT/OCO orders for ${rawSymbol} using entry price ${fillPrice}`);
+  console.log(`🧩 Placing child limit orders for ${rawSymbol} using entry price ${fillPrice}`);
 
   const childOrders = await placeGttOcoChildOrders({
     order: orderPayload,
@@ -472,7 +452,7 @@ async function placeGttOcoChildOrdersOnConfirmation({
       status: orderStreamData?.orderStatus === "COMPLETE" ? "COMPLETED" : brokerOrder.status
     }, { returnDocument: "after" });
   } catch (err) {
-    console.error("❌ Failed to mark child GTT/OCO orders as placed:", err.message || err);
+    console.error("❌ Failed to mark child limit orders as placed:", err.message || err);
   }
 
   return childOrders;
@@ -508,7 +488,7 @@ async function placeGttOcoChildOrders({
   baseUrl,
   brokerOrderId
 }) {
-  const rawChildOrderType = order?.order_type || order?.OT || order?.orderType || order?.type || "MKT";
+  const rawChildOrderType = order?.order_type || order?.OT || order?.orderType || order?.type || "L";
   const childOrders = buildChildOrderPayloads({
     instrument,
     action,
@@ -537,7 +517,7 @@ async function placeGttOcoChildOrders({
 
   for (const child of childOrders) {
     try {
-      console.log("📦 GTT child payload before placement:", JSON.stringify({
+      console.log("📦 Child limit payload before placement:", JSON.stringify({
         tag: child.tag,
         payload: child.jData,
         fillPrice,
@@ -547,10 +527,10 @@ async function placeGttOcoChildOrders({
         validity
       }, null, 2));
 
-      console.log(`📤 Sending ${child.tag} GTT payload to broker`, JSON.stringify(child.jData));
+      console.log(`📤 Sending ${child.tag} limit payload to broker`, JSON.stringify(child.jData));
       const response = await postKotakOrder(child.jData, sessionToken, sid, baseUrl);
       const responseBody = response?.data && typeof response.data === "object" ? response.data : {};
-      console.log(`✅ GTT ${child.tag} response`, JSON.stringify(responseBody));
+      console.log(`✅ Limit ${child.tag} response`, JSON.stringify(responseBody));
       childResults.push({
         tag: child.tag,
         status: responseBody?.status || responseBody?.stat || responseBody?.order_status || responseBody?.orderStatus || "UNKNOWN",
@@ -558,7 +538,7 @@ async function placeGttOcoChildOrders({
         payload: child.jData
       });
     } catch (err) {
-      console.error(`❌ GTT ${child.tag} error`, err?.response?.status, err?.response?.data || err.message);
+      console.error(`❌ Limit ${child.tag} error`, err?.response?.status, err?.response?.data || err.message);
       childResults.push({
         tag: child.tag,
         error: err?.response?.data || err.message,
@@ -571,7 +551,7 @@ async function placeGttOcoChildOrders({
     try {
       await BrokerOrder.findByIdAndUpdate(brokerOrderId, { childOrders: childResults });
     } catch (err) {
-      console.error("❌ Failed to save child GTT/OCO orders:", err.message || err);
+      console.error("❌ Failed to save child limit orders:", err.message || err);
     }
   }
 
